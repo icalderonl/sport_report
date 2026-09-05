@@ -1,16 +1,19 @@
+<img src="assets/logo-256.png" alt="" width="96" align="right">
+
 # Sistema de reporte semanal de entrenamiento
 
 Corre en una Raspberry Pi, se dispara solo los **lunes a las 07:00** y manda por
 Telegram el reporte de la semana de running que acaba de cerrar: adherencia al
-plan, carga (ACWR, Monotony/Strain), deriva cardíaca y un resumen narrativo
-generado por IA **sobre esas cifras ya calculadas**.
+plan, carga (ACWR, Monotony/Strain), deriva cardíaca, un gráfico del volumen de
+las últimas 16 semanas y un resumen narrativo generado por IA **sobre esas cifras
+ya calculadas**.
 
 Fuente de datos: **solo Strava**. El plan se carga a mano por Telegram.
 
 ## Cómo funciona
 
 ```
-Telegram (bot)  <-- /setplan, /plan, /fuerza <dia>
+Telegram (bot)  <-- /setplan /plan /fuerza /progreso /volumen /estado
       |
       v
 data/plan_actual.json  (anclado a un lunes-domingo concreto)
@@ -18,11 +21,15 @@ data/plan_actual.json  (anclado a un lunes-domingo concreto)
       v
 [timer lunes 07:00] -> Ingesta Strava -> SQLite -> Motor de cálculo
                                                         |
-                                                        v
-                                        Claude API (narrativa) -> Telegram
+                                          +-------------+-------------+
+                                          v                           v
+                              Claude API (narrativa)        grafico.py (PNG)
+                                          |                           |
+                                          +----------> Telegram <-----+
 ```
 
-Dos procesos en la Pi: el **bot** corre siempre (systemd, long polling) y la
+Dos procesos en la Pi: el **bot** corre siempre (systemd, long polling — la Pi
+está detrás de NAT doméstico y un webhook exigiría puerto público y TLS) y la
 **corrida semanal** la dispara un timer.
 
 ## Instalación
@@ -37,6 +44,11 @@ Cuatro runbooks, en este orden:
 ```bash
 sudo bash deploy/instalar.sh
 ```
+
+Requiere **Python 3.11+** (el SDK de Anthropic pide 3.10+ y el instalador aborta
+por debajo de 3.11). Las dependencias son `httpx`, `python-telegram-bot`,
+`python-dotenv`, `anthropic` y `matplotlib` — esta última solo para el gráfico,
+y su ausencia no impide que el reporte llegue.
 
 ## Comandos
 
@@ -56,12 +68,16 @@ sudo bash deploy/instalar.sh
 | Comando | Para qué |
 |---|---|
 | `python -m sport_report.diagnostico` | **Empieza por acá cuando algo falle.** Chequea todo sin tocar la red |
-| `python -m sport_report.run_weekly --dry-run` | Imprime el reporte sin enviarlo |
+| `python -m sport_report.run_weekly --dry-run` | Imprime el reporte sin enviarlo y deja el gráfico en disco |
 | `python -m sport_report.strava.autorizar` | Flujo OAuth inicial (una sola vez) |
 | `python -m sport_report.strava.verificar` | Confirma la conexión con Strava |
-| `python -m sport_report.strava.backfill 35` | Historial inicial para que ACWR sea confiable |
+| `python -m sport_report.strava.backfill 120` | Historial inicial: 28 días para ACWR, 112 para el gráfico |
 | `python -m sport_report.narrative.probar` | Prueba la capa narrativa |
 | `python -m sport_report.telegram.bot` | Levanta el bot en primer plano |
+
+`run_weekly` acepta además `--semana YYYY-MM-DD` para reprocesar una semana
+concreta, `--sin-ingesta` para no tocar Strava y `--sin-narrativa` para no llamar
+a Claude.
 
 ## Formato del plan
 
@@ -160,16 +176,25 @@ python -m pytest -q
 
 ```
 sport_report/
-  config.py         umbrales y pesos, todos ajustables en un solo lugar
+  config.py         umbrales, pesos y ritmo de estimación, todo en un solo lugar
   fechas.py         semanas lunes-domingo en zona local
   storage.py        JSON atómico con lock (bot y cron comparten archivos)
+  logging_setup.py  logs rotados en logs/
   plan/             gramática de /setplan, distancia dura, persistencia
   strava/           OAuth con rotación, cliente, métricas, ingesta, backfill
   db/               esquema y repositorio SQLite
   engine/           ACWR, Foster, adherencia -> JSON único
   narrative/        llamada a Claude + verificación de cifras
-  telegram/         bot, comandos, formateo, envío
-  grafico.py        grafico de volumen en PNG (matplotlib)
+  telegram/         bot, comandos, formateo, envío de texto e imagen
+  grafico.py        gráfico de volumen en PNG (matplotlib)
   run_weekly.py     orquestador (lo dispara el timer)
   diagnostico.py    chequeo de salud
+deploy/             instalar.sh, unidades systemd y los cuatro runbooks
+assets/             logo del servicio y el script que lo regenera
 ```
+
+### Limitación conocida
+
+`diagnostico` marca `FALLA — falta tokens.json` aunque el sistema pueda arrancar
+con `STRAVA_REFRESH_TOKEN` sembrado en `.env`: mira el archivo y no considera esa
+semilla. Se corrige solo en cuanto la primera corrida escribe `data/tokens.json`.

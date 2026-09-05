@@ -73,27 +73,25 @@ loop. Repite el paso 2. Causas típicas: revocaste el acceso desde
 Strava permite 100 requests cada 15 minutos y 1000 al día (por app). Una corrida
 semanal normal usa ~10 requests (1 de actividades + 1 stream por sesión + zonas).
 
-El **backfill inicial** de 28 días sí puede acercarse al límite, así que el
+El **backfill inicial** de 120 días sí puede acercarse al límite, así que el
 cliente acepta `pausa_entre_requests` para espaciarlas. Ante un 429 espera y
 reintenta; si la espera supera los 16 minutos aborta con `StravaRateLimit` en
 vez de colgar la corrida.
 
 ## 4. Carga histórica inicial (backfill)
 
-ACWR necesita 28 días de historial para ser confiable. Sin esto, las primeras
-cuatro semanas del sistema mostrarían ACWR y Monotony como no confiables aunque
-los datos ya estén en Strava.
+Dos cosas necesitan historial: **ACWR** pide 28 días para ser confiable y el
+**gráfico de volumen** dibuja 16 semanas, o sea 112 días. Sin esto las primeras
+cuatro semanas mostrarían ACWR y Monotony como no confiables, y el gráfico casi
+vacío, aunque los datos ya estén en Strava.
 
 ```bash
-python -m sport_report.strava.backfill 35
+python -m sport_report.strava.backfill 120
 ```
 
-Para que el gráfico de volumen de 16 semanas salga completo hacen falta 112
-días, así que conviene `backfill 120` de entrada. El coste es una sola vez.
-
-Trae los días pedidos con 1.5 s de pausa entre requests (~40 llamadas, holgado dentro de
-las 100 por 15 minutos). Es idempotente: se puede repetir sin duplicar filas ni
-volver a bajar streams ya procesados.
+Trae los días pedidos con 1.5 s de pausa entre requests, holgado dentro de las
+100 por 15 minutos. Es idempotente: se puede repetir sin duplicar filas ni
+volver a bajar streams ya procesados, así que el coste real es una sola vez.
 
 Al final imprime cuántos días quedaron con carga registrada. Si ese número es
 bajo, revisa el aviso de sesiones sin HR: una corrida sin banda ni pulsómetro

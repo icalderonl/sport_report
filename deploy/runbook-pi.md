@@ -64,7 +64,7 @@ sudo install -o sportreport -g sportreport -m 600 /tmp/tokens.json /opt/sport_re
 
 ```bash
 cd /opt/sport_report
-sudo -u sportreport ./.venv/bin/python -m sport_report.strava.backfill 35
+sudo -u sportreport ./.venv/bin/python -m sport_report.strava.backfill 120
 sudo -u sportreport ./.venv/bin/python -m sport_report.diagnostico
 sudo systemctl restart sport-report-bot
 ```
