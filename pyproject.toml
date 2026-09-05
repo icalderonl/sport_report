@@ -1,0 +1,24 @@
+[project]
+name = "sport-report"
+version = "0.1.0"
+description = "Reporte semanal de entrenamiento de running (Strava -> metricas -> Telegram)"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "python-telegram-bot>=21.0",
+    "python-dotenv>=1.0",
+    "anthropic>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["sport_report*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

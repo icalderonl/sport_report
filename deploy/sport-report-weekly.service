@@ -1,0 +1,26 @@
+# Corrida semanal. La dispara sport-report-weekly.timer, no se habilita sola.
+[Unit]
+Description=Reporte semanal de entrenamiento
+Documentation=file:///opt/sport_report/deploy/runbook-pi.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sportreport
+Group=sportreport
+WorkingDirectory=/opt/sport_report
+ExecStart=/opt/sport_report/.venv/bin/python -m sport_report.run_weekly
+
+# La ingesta puede esperar por rate limit de Strava (hasta ~16 min) y despues
+# vienen la llamada a Claude y el envio. 30 minutos es holgado.
+TimeoutStartSec=30min
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sport-report-weekly
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+RestrictSUIDSGID=true

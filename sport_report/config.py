@@ -1,0 +1,79 @@
+"""Configuracion central. Todo valor ajustable vive aca, no disperso en el codigo."""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+ROOT = Path(__file__).resolve().parent.parent
+
+try:
+    from dotenv import load_dotenv
+
+    # Ruta explicita, no busqueda desde el cwd: systemd arranca el proceso con
+    # un directorio de trabajo que no tiene por que ser el del proyecto.
+    load_dotenv(ROOT / ".env")
+except ImportError:  # el parser (fase 1) no necesita dotenv
+    pass
+
+
+def _path(env: str, default: str) -> Path:
+    p = Path(os.getenv(env, default))
+    return p if p.is_absolute() else ROOT / p
+
+
+DATA_DIR = _path("DATA_DIR", "data")
+LOG_DIR = _path("LOG_DIR", "logs")
+
+DB_PATH = DATA_DIR / "sport_report.db"
+TOKENS_PATH = DATA_DIR / "tokens.json"
+PLAN_ACTUAL_PATH = DATA_DIR / "plan_actual.json"
+PLANES_DIR = DATA_DIR / "planes"
+
+TZ = ZoneInfo(os.getenv("TZ_LOCAL", "America/Santiago"))
+
+
+@dataclass(frozen=True)
+class Umbrales:
+    """Valores de literatura general, NO calibrados a este atleta (spec 10)."""
+
+    acwr_alto: float = 1.5
+    acwr_bajo: float = 0.8
+    monotony_alta: float = 2.0
+    decoupling_alto_pct: float = 5.0
+    # Dias minimos de historico real para reportar ACWR como confiable.
+    acwr_dias_minimos: int = 28
+    # Sesiones minimas con carga registrada en la ventana cronica.
+    acwr_sesiones_minimas: int = 8
+    # Banda dentro de la cual una sesion se considera cumplida.
+    adherencia_min_pct: float = 95.0
+    adherencia_max_pct: float = 110.0
+
+
+@dataclass(frozen=True)
+class Carga:
+    """Pesos tipo TRIMP por zona de HR. Ajustables."""
+
+    pesos_zona: tuple[float, ...] = (1.0, 2.0, 3.0, 4.0, 5.0)
+    # Usado solo si el atleta no tiene zonas configuradas en Strava.
+    # El output debe quedar marcado como impreciso (spec 5).
+    peso_fallback: float = 2.5
+    # Minimo de puntos de stream para calcular decoupling; bajo esto -> None.
+    decoupling_min_puntos: int = 600
+
+
+UMBRALES = Umbrales()
+CARGA = Carga()
+
+STRAVA_CLIENT_ID = os.getenv("STRAVA_CLIENT_ID", "")
+STRAVA_CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET", "")
+# Solo bootstrap de la primera corrida: despues manda data/tokens.json.
+STRAVA_REFRESH_TOKEN = os.getenv("STRAVA_REFRESH_TOKEN", "")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
+
+TIPOS_RUN = ("Run", "TrailRun", "VirtualRun")
+TIPOS_FUERZA = ("WeightTraining", "Workout", "Crossfit")

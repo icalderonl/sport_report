@@ -1,0 +1,38 @@
+# Bot de Telegram: proceso persistente (long polling).
+# Instalar en /etc/systemd/system/ ajustando User y las rutas.
+[Unit]
+Description=Bot de Telegram del reporte de entrenamiento
+Documentation=file:///opt/sport_report/deploy/runbook-pi.md
+After=network-online.target
+Wants=network-online.target
+# Si falla 5 veces en 5 minutos, systemd deja de reintentar: algo esta mal de
+# verdad (token invalido, dependencia rota) y reintentar no lo arregla.
+# Estas dos claves van en [Unit]; en [Service] systemd las ignora en silencio.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=sportreport
+Group=sportreport
+WorkingDirectory=/opt/sport_report
+ExecStart=/opt/sport_report/.venv/bin/python -m sport_report.telegram.bot
+
+# El bot debe sobrevivir a cortes de red y reinicios del router.
+Restart=always
+RestartSec=15s
+
+# El logging propio va a logs/bot.log; esto es para journalctl.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sport-report-bot
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

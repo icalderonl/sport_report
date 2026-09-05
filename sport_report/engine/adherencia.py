@@ -1,0 +1,283 @@
+"""Adherencia al plan, dia por dia.
+
+Cada dia se compara en la unidad nativa de la sesion planificada: si el plan
+pide km se compara distancia, si pide minutos se compara duracion. Las tres
+distinciones que la spec exige mantener separadas:
+
+  - Sin sesion registrada  -> 0% (incumplimiento real).
+  - Sesion registrada pero sin el dato en la unidad que pide el plan (indoor sin
+    GPS cuando el plan pedia km) -> `null`, dato faltante. NO es 0%.
+  - Sesiones con `estructura=` -> se comparan contra la distancia dura derivada,
+    no contra el `cantidad` tecleado ni contra el total real. La recuperacion
+    trotada entre repeticiones nunca se declara en el plan; sin este ajuste toda
+    sesion con series muestra artificialmente >100%.
+
+El volumen real de la semana se calcula aparte, sumando el 100% de la distancia
+de todas las sesiones: la recuperacion sigue contando para el volumen aunque no
+cuente para el % de adherencia de esa sesion.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date, timedelta
+from typing import Any, Iterable, Sequence
+
+from ..config import UMBRALES, Umbrales
+from ..db.models import SesionReal
+from ..fechas import RangoSemana
+from ..plan.models import ORDEN_DIAS, PlanSemanal, Sesion
+
+# Estados posibles de un dia.
+CUMPLIDA = "cumplida"
+BAJO_PLAN = "bajo_plan"
+SOBRE_PLAN = "sobre_plan"
+SIN_SESION = "sin_sesion"
+DATO_FALTANTE = "dato_faltante"
+DESCANSO_OK = "descanso_respetado"
+DESCANSO_ROTO = "actividad_no_planificada"
+FUERZA_OK = "fuerza_cumplida"
+FUERZA_PENDIENTE = "fuerza_pendiente"
+
+
+@dataclass(frozen=True)
+class DiaAdherencia:
+    dia: str
+    fecha: str
+    tipo_plan: str
+    objetivo: float | None
+    unidad: str | None
+    real: float | None
+    pct: float | None
+    estado: str
+    nota: str = ""
+    actividades: tuple[int, ...] = ()
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "dia": self.dia,
+            "fecha": self.fecha,
+            "tipo_plan": self.tipo_plan,
+            "objetivo": self.objetivo,
+            "unidad": self.unidad,
+            "real": self.real,
+            "pct": self.pct,
+            "estado": self.estado,
+            "nota": self.nota,
+            "actividades": list(self.actividades),
+        }
+
+
+@dataclass(frozen=True)
+class ResumenAdherencia:
+    dias: tuple[DiaAdherencia, ...]
+    volumen_planificado_km: float
+    volumen_real_km: float
+    volumen_pct: float | None
+    sesiones_evaluables: int
+    sesiones_cumplidas: int
+    dias_sin_dato: int
+    fuerza_planificadas: int
+    fuerza_cumplidas: int
+    no_planificadas: tuple[str, ...] = ()
+    avisos: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def pct_global(self) -> float | None:
+        if not self.sesiones_evaluables:
+            return None
+        return round(self.sesiones_cumplidas / self.sesiones_evaluables * 100, 1)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "dias": [d.to_json() for d in self.dias],
+            "volumen_planificado_km": self.volumen_planificado_km,
+            "volumen_real_km": self.volumen_real_km,
+            "volumen_pct": self.volumen_pct,
+            "sesiones_evaluables": self.sesiones_evaluables,
+            "sesiones_cumplidas": self.sesiones_cumplidas,
+            "pct_global": self.pct_global,
+            "dias_sin_dato": self.dias_sin_dato,
+            "fuerza": {
+                "planificadas": self.fuerza_planificadas,
+                "cumplidas": self.fuerza_cumplidas,
+            },
+            "no_planificadas": list(self.no_planificadas),
+            "avisos": list(self.avisos),
+        }
+
+
+def _real_en_unidad(
+    sesiones: Sequence[SesionReal], unidad: str
+) -> tuple[float | None, bool]:
+    """Suma lo real en la unidad pedida. Devuelve (valor, hubo_dato_faltante)."""
+    if unidad == "km":
+        valores = [s.distancia_km for s in sesiones]
+    else:
+        valores = [s.duracion_min for s in sesiones]
+    presentes = [v for v in valores if v is not None]
+    falta = len(presentes) < len(valores)
+    if not presentes:
+        return None, True
+    return round(sum(presentes), 2), falta
+
+
+def _estado_por_pct(pct: float, umbrales: Umbrales) -> str:
+    if pct < umbrales.adherencia_min_pct:
+        return BAJO_PLAN
+    if pct > umbrales.adherencia_max_pct:
+        return SOBRE_PLAN
+    return CUMPLIDA
+
+
+def _evaluar_dia(
+    sesion_plan: Sesion,
+    fecha: date,
+    reales: Sequence[SesionReal],
+    fuerza_completada: bool,
+    umbrales: Umbrales,
+) -> DiaAdherencia:
+    ids = tuple(s.strava_id for s in reales)
+    base = dict(dia=sesion_plan.dia, fecha=fecha.isoformat(), tipo_plan=sesion_plan.tipo)
+
+    if sesion_plan.es_descanso:
+        hubo = bool(reales)
+        nombres = ", ".join(s.tipo_strava for s in reales)
+        return DiaAdherencia(
+            **base,
+            objetivo=None,
+            unidad=None,
+            real=None,
+            pct=None,
+            estado=DESCANSO_ROTO if hubo else DESCANSO_OK,
+            nota=f"actividad no planificada: {nombres}" if hubo else "",
+            actividades=ids,
+        )
+
+    if sesion_plan.es_fuerza:
+        return DiaAdherencia(
+            **base,
+            objetivo=None,
+            unidad=None,
+            real=None,
+            pct=None,
+            estado=FUERZA_OK if fuerza_completada else FUERZA_PENDIENTE,
+            nota="" if fuerza_completada else "no detectada en Strava ni marcada con /fuerza",
+            actividades=ids,
+        )
+
+    # Sesion de carrera: la fuerza registrada ese dia no entra en la comparacion.
+    corridas = [s for s in reales if not s.es_fuerza]
+    unidad = "km" if sesion_plan.objetivo_km() is not None else "min"
+    objetivo = sesion_plan.objetivo_km() if unidad == "km" else sesion_plan.objetivo_min()
+
+    nota = ""
+    if sesion_plan.estructura is not None:
+        nota = (
+            f"comparado contra {objetivo:g}km duros de `estructura=`, no contra el "
+            "total real (incluye recuperacion entre reps)"
+        )
+
+    if not corridas:
+        return DiaAdherencia(
+            **base,
+            objetivo=objetivo,
+            unidad=unidad,
+            real=None,
+            pct=0.0,
+            estado=SIN_SESION,
+            nota="sin actividad registrada ese dia",
+            actividades=(),
+        )
+
+    real, falta = _real_en_unidad(corridas, unidad)
+    if real is None:
+        return DiaAdherencia(
+            **base,
+            objetivo=objetivo,
+            unidad=unidad,
+            real=None,
+            pct=None,
+            estado=DATO_FALTANTE,
+            nota=(
+                f"hubo sesion pero sin {'distancia' if unidad == 'km' else 'duracion'} "
+                "registrada; no es lo mismo que no entrenar"
+            ),
+            actividades=ids,
+        )
+
+    if falta:
+        nota = (nota + "; " if nota else "") + "alguna sesion del dia no aporto el dato"
+
+    pct = round(real / objetivo * 100, 1) if objetivo else None
+    return DiaAdherencia(
+        **base,
+        objetivo=objetivo,
+        unidad=unidad,
+        real=real,
+        pct=pct,
+        estado=_estado_por_pct(pct, umbrales) if pct is not None else DATO_FALTANTE,
+        nota=nota,
+        actividades=ids,
+    )
+
+
+def calcular(
+    plan: PlanSemanal | None,
+    rango: RangoSemana,
+    sesiones: Iterable[SesionReal],
+    umbrales: Umbrales = UMBRALES,
+) -> ResumenAdherencia:
+    por_fecha: dict[date, list[SesionReal]] = {}
+    for s in sesiones:
+        por_fecha.setdefault(s.fecha, []).append(s)
+
+    # El volumen real suma el 100% de la distancia de todas las sesiones,
+    # recuperacion incluida, sin importar como se evaluo cada dia.
+    volumen_real = round(
+        sum(s.distancia_km or 0.0 for lista in por_fecha.values() for s in lista), 2
+    )
+
+    if plan is None:
+        return ResumenAdherencia(
+            dias=(),
+            volumen_planificado_km=0.0,
+            volumen_real_km=volumen_real,
+            volumen_pct=None,
+            sesiones_evaluables=0,
+            sesiones_cumplidas=0,
+            dias_sin_dato=0,
+            fuerza_planificadas=0,
+            fuerza_cumplidas=0,
+            avisos=("no habia plan cargado para esta semana: solo se reporta lo real",),
+        )
+
+    dias: list[DiaAdherencia] = []
+    for i, letra in enumerate(ORDEN_DIAS):
+        fecha = rango.inicio + timedelta(days=i)
+        dias.append(
+            _evaluar_dia(
+                plan.sesiones[letra],
+                fecha,
+                por_fecha.get(fecha, []),
+                plan.fuerza_completada.get(letra, False),
+                umbrales,
+            )
+        )
+
+    evaluables = [d for d in dias if d.estado in (CUMPLIDA, BAJO_PLAN, SOBRE_PLAN, SIN_SESION)]
+    cumplidas = [d for d in evaluables if d.estado == CUMPLIDA]
+    fuerza = [d for d in dias if d.tipo_plan == "fuerza"]
+
+    planificado = plan.volumen_planificado_km()
+    return ResumenAdherencia(
+        dias=tuple(dias),
+        volumen_planificado_km=planificado,
+        volumen_real_km=volumen_real,
+        volumen_pct=round(volumen_real / planificado * 100, 1) if planificado else None,
+        sesiones_evaluables=len(evaluables),
+        sesiones_cumplidas=len(cumplidas),
+        dias_sin_dato=sum(1 for d in dias if d.estado == DATO_FALTANTE),
+        fuerza_planificadas=len(fuerza),
+        fuerza_cumplidas=sum(1 for d in fuerza if d.estado == FUERZA_OK),
+        no_planificadas=tuple(d.dia for d in dias if d.estado == DESCANSO_ROTO),
+    )

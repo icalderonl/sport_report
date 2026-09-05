@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Instalacion en la Raspberry Pi. Idempotente: se puede volver a correr.
+#
+#   sudo bash deploy/instalar.sh
+#
+# Asume que el codigo ya esta en DESTINO (copiado con scp o clonado).
+set -euo pipefail
+
+DESTINO="${DESTINO:-/opt/sport_report}"
+USUARIO="${USUARIO:-sportreport}"
+ZONA="${ZONA:-America/Santiago}"
+
+if [[ $EUID -ne 0 ]]; then
+  echo "Corre esto con sudo." >&2
+  exit 1
+fi
+
+echo "==> Zona horaria del sistema"
+# systemd interpreta OnCalendar en hora local: si la Pi esta en UTC, el reporte
+# llegaria a las 03:00 o a las 04:00 segun el horario de verano.
+actual="$(timedatectl show -p Timezone --value)"
+if [[ "$actual" != "$ZONA" ]]; then
+  echo "    cambiando de $actual a $ZONA"
+  timedatectl set-timezone "$ZONA"
+else
+  echo "    ya es $ZONA"
+fi
+
+echo "==> Usuario de servicio"
+if ! id -u "$USUARIO" >/dev/null 2>&1; then
+  useradd --system --home-dir "$DESTINO" --shell /usr/sbin/nologin "$USUARIO"
+  echo "    creado $USUARIO"
+else
+  echo "    $USUARIO ya existe"
+fi
+
+echo "==> Dependencias del sistema"
+apt-get update -qq
+apt-get install -y -qq python3 python3-venv python3-dev
+
+py_ver="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+echo "    Python $py_ver"
+if [[ "$(printf '%s\n3.11\n' "$py_ver" | sort -V | head -1)" != "3.11" ]]; then
+  echo "    ADVERTENCIA: se necesita Python 3.11+ (el SDK anthropic exige 3.10+)." >&2
+fi
+
+echo "==> Entorno virtual e instalacion"
+cd "$DESTINO"
+[[ -d .venv ]] || python3 -m venv .venv
+./.venv/bin/pip install --quiet --upgrade pip
+./.venv/bin/pip install --quiet -e .
+
+echo "==> Directorios de datos"
+mkdir -p data logs
+chown -R "$USUARIO:$USUARIO" "$DESTINO"
+chmod 750 "$DESTINO/data" "$DESTINO/logs"
+
+if [[ -f .env ]]; then
+  chown "$USUARIO:$USUARIO" .env
+  chmod 600 .env
+  echo "    .env con permisos 600"
+else
+  cp .env.example .env
+  chown "$USUARIO:$USUARIO" .env
+  chmod 600 .env
+  echo "    .env creado desde el ejemplo: FALTA COMPLETARLO"
+fi
+
+echo "==> Unidades de systemd"
+for u in sport-report-bot.service sport-report-weekly.service sport-report-weekly.timer; do
+  sed -e "s#/opt/sport_report#$DESTINO#g" \
+      -e "s#User=sportreport#User=$USUARIO#" \
+      -e "s#Group=sportreport#Group=$USUARIO#" \
+      "$DESTINO/deploy/$u" > "/etc/systemd/system/$u"
+done
+systemctl daemon-reload
+systemctl enable --now sport-report-bot.service
+systemctl enable --now sport-report-weekly.timer
+
+echo
+echo "Listo. Siguientes pasos:"
+echo "  1. Completa $DESTINO/.env  (ver deploy/runbook-*.md)"
+echo "  2. sudo -u $USUARIO $DESTINO/.venv/bin/python -m sport_report.strava.autorizar"
+echo "  3. sudo -u $USUARIO $DESTINO/.venv/bin/python -m sport_report.strava.backfill 35"
+echo "  4. sudo -u $USUARIO $DESTINO/.venv/bin/python -m sport_report.diagnostico"
+echo "  5. sudo systemctl restart sport-report-bot"
+echo
+systemctl list-timers sport-report-weekly.timer --no-pager || true

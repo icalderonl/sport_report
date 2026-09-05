@@ -1,0 +1,20 @@
+# Lunes 07:00 hora local de la Pi.
+# IMPORTANTE: OnCalendar usa la zona horaria del sistema. Verificar con
+#   timedatectl    ->    Time zone: America/Santiago
+[Unit]
+Description=Dispara el reporte semanal los lunes a las 07:00
+
+[Timer]
+OnCalendar=Mon *-*-* 07:00:00
+
+# Si la Pi estaba apagada el lunes a las 07:00, la corrida se ejecuta apenas
+# arranque en vez de perderse hasta el lunes siguiente.
+Persistent=true
+
+# Un poco de dispersion para no pegarle a Strava en el minuto exacto.
+RandomizedDelaySec=5min
+
+Unit=sport-report-weekly.service
+
+[Install]
+WantedBy=timers.target

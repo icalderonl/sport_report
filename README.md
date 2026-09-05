@@ -1,0 +1,135 @@
+# Sistema de reporte semanal de entrenamiento
+
+Corre en una Raspberry Pi, se dispara solo los **lunes a las 07:00** y manda por
+Telegram el reporte de la semana de running que acaba de cerrar: adherencia al
+plan, carga (ACWR, Monotony/Strain), deriva cardíaca y un resumen narrativo
+generado por IA **sobre esas cifras ya calculadas**.
+
+Fuente de datos: **solo Strava**. El plan se carga a mano por Telegram.
+
+## Cómo funciona
+
+```
+Telegram (bot)  <-- /setplan, /plan, /fuerza <dia>
+      |
+      v
+data/plan_actual.json  (anclado a un lunes-domingo concreto)
+      |
+      v
+[timer lunes 07:00] -> Ingesta Strava -> SQLite -> Motor de cálculo
+                                                        |
+                                                        v
+                                        Claude API (narrativa) -> Telegram
+```
+
+Dos procesos en la Pi: el **bot** corre siempre (systemd, long polling) y la
+**corrida semanal** la dispara un timer.
+
+## Instalación
+
+Cuatro runbooks, en este orden:
+
+1. [deploy/runbook-strava.md](deploy/runbook-strava.md) — app OAuth y autorización
+2. [deploy/runbook-telegram.md](deploy/runbook-telegram.md) — bot y chat_id
+3. [deploy/runbook-anthropic.md](deploy/runbook-anthropic.md) — API key (opcional)
+4. [deploy/runbook-pi.md](deploy/runbook-pi.md) — instalación y operación
+
+```bash
+sudo bash deploy/instalar.sh
+```
+
+## Comandos
+
+| Comando | Para qué |
+|---|---|
+| `python -m sport_report.diagnostico` | **Empieza por acá cuando algo falle.** Chequea todo sin tocar la red |
+| `python -m sport_report.run_weekly --dry-run` | Imprime el reporte sin enviarlo |
+| `python -m sport_report.strava.autorizar` | Flujo OAuth inicial (una sola vez) |
+| `python -m sport_report.strava.verificar` | Confirma la conexión con Strava |
+| `python -m sport_report.strava.backfill 35` | Historial inicial para que ACWR sea confiable |
+| `python -m sport_report.narrative.probar` | Prueba la capa narrativa |
+| `python -m sport_report.telegram.bot` | Levanta el bot en primer plano |
+
+## Formato del plan
+
+```
+/setplan
+semana: 5
+L: rest
+M: easy 8km Z2
+W: fuerza
+J: series 8.6km @Z4 estructura=2km+3x1000m+4x400m+2km
+V: prog 10km estructura=3km@6:00+3km@5:30+4km@5:00
+S: rest
+D: long 16km @6:15/5:45 Z2
+```
+
+Los 7 días son obligatorios. Un plan incompleto o mal escrito se **rechaza
+entero**, señalando línea y día. `/setplan proxima` lo ancla a la semana
+siguiente (útil si lo cargas el domingo por la noche).
+
+## Decisiones que conviene conocer antes de tocar el código
+
+**La carga no se mide en kilómetros.** Se usa un TRIMP por zona (minutos en zona
+× peso de zona) recorriendo el stream de HR, porque el plan mezcla sesiones
+prescritas por distancia con otras por tiempo. Una sesión sin pulsómetro **no
+tiene carga** (`null`, no 0) y por eso no cuenta para ACWR ni Monotony.
+
+**Las sesiones con `estructura=` se comparan contra la distancia dura derivada**,
+no contra la cantidad tecleada. Una sesión de series siempre incluye la
+recuperación trotada entre repeticiones, que el plan nunca declara: sin este
+ajuste, toda sesión con series mostraría >100% de adherencia. El volumen semanal
+sí cuenta el 100% de lo recorrido.
+
+**Hay tres estados distintos, no dos.** Sesión sin registrar = 0%. Sesión
+registrada pero sin el dato que pide el plan (indoor sin GPS cuando el plan
+pedía km) = `null`, dato faltante. No son lo mismo y el reporte los distingue.
+
+**Ninguna cifra sale sin su bandera de confiabilidad.** ACWR con menos de 28 días
+de histórico, Monotony con desviación 0, carga sin zonas de HR configuradas: todo
+eso va marcado con el motivo, nunca presentado como dato fino.
+
+**El LLM narra, no calcula.** Recibe solo el JSON del motor de cálculo, con
+prohibición explícita de introducir cifras nuevas, y después hay una verificación
+en código que compara los números del texto contra los del JSON.
+
+**El reporte siempre llega.** Si Strava falla se reporta con lo que hay en la
+base, avisando; si Claude falla se reporta sin narrativa. Solo un fallo del envío
+por Telegram hace fracasar la corrida.
+
+**El `refresh_token` de Strava rota.** Se persiste en `data/tokens.json` de forma
+atómica en cada intercambio, antes de usarse. Sin esto el cron se rompe solo,
+en silencio, semanas después de instalarlo.
+
+## Fuera de alcance
+
+- **GCT y oscilación vertical**: la API pública de Strava no los expone.
+- **TrainingPeaks y Garmin Connect**: sin API personal; la vía no oficial viola
+  sus ToS y, en el caso de Garmin, está técnicamente rota desde marzo de 2026.
+- **RPE**: evaluado y descartado.
+
+Ver la sección 6 de la spec original antes de reabrir cualquiera de estas.
+
+## Desarrollo
+
+```bash
+pip install -e ".[dev]"
+python -m pytest -q
+```
+
+192 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
+
+```
+sport_report/
+  config.py         umbrales y pesos, todos ajustables en un solo lugar
+  fechas.py         semanas lunes-domingo en zona local
+  storage.py        JSON atómico con lock (bot y cron comparten archivos)
+  plan/             gramática de /setplan, distancia dura, persistencia
+  strava/           OAuth con rotación, cliente, métricas, ingesta, backfill
+  db/               esquema y repositorio SQLite
+  engine/           ACWR, Foster, adherencia -> JSON único
+  narrative/        llamada a Claude + verificación de cifras
+  telegram/         bot, comandos, formateo, envío
+  run_weekly.py     orquestador (lo dispara el timer)
+  diagnostico.py    chequeo de salud
+```

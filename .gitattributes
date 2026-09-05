@@ -1,0 +1,8 @@
+# El destino es Linux (Raspberry Pi): los scripts de shell y las unidades de
+# systemd se rompen con finales de linea CRLF. Se normaliza todo a LF, tambien
+# en el arbol de trabajo de Windows.
+* text=auto eol=lf
+
+*.db binary
+*.png binary
+*.jpg binary
