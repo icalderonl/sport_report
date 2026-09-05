@@ -40,6 +40,19 @@ sudo bash deploy/instalar.sh
 
 ## Comandos
 
+### Por Telegram
+
+| Comando | Para qué |
+|---|---|
+| `/setplan` | Carga el plan de la semana |
+| `/plan` | Plan vigente y estado de fuerza |
+| `/fuerza <dia>` | Marca una sesión de fuerza como cumplida |
+| `/progreso` | **Cómo va la semana en curso**, sin contar los días que faltan |
+| `/volumen` | Gráfico de km por semana de las últimas 16 |
+| `/estado` | Qué semana reportaría el cron ahora |
+
+### Por consola
+
 | Comando | Para qué |
 |---|---|
 | `python -m sport_report.diagnostico` | **Empieza por acá cuando algo falle.** Chequea todo sin tocar la red |
@@ -69,6 +82,22 @@ entero**, señalando línea y día. `/setplan proxima` lo ancla a la semana
 siguiente (útil si lo cargas el domingo por la noche).
 
 ## Decisiones que conviene conocer antes de tocar el código
+
+**Una sesión prescrita en minutos aporta km estimados al volumen planificado.**
+Si no, el porcentaje semanal compara dos bases distintas: el numerador suma los
+km reales de todas las sesiones y el denominador solo las prescritas en km, así
+que una sesión por tiempo lo infla. El ritmo escrito en el plan manda; si no hay,
+se usa 7:00/km **solo** para sesiones `easy` (ajustable en `config.Estimacion`).
+Una sesión por tiempo de otro tipo y sin ritmo no se estima: queda fuera del
+volumen planificado y con aviso. La adherencia **día a día** no cambia — cada día
+se sigue comparando en su unidad nativa.
+
+**Un día que todavía no llega no es un incumplimiento.** `/progreso` corre el
+mismo motor con `hasta=hoy`: los días futuros quedan en estado `pendiente`, fuera
+del porcentaje de sesiones y fuera del volumen planificado, y las ventanas
+móviles de ACWR terminan hoy en vez de el domingo. Monotony sobre una semana
+incompleta se devuelve marcada como no confiable, porque no es comparable con la
+de una semana entera.
 
 **La carga no se mide en kilómetros.** Se usa un TRIMP por zona (minutos en zona
 × peso de zona) recorriendo el stream de HR, porque el plan mezcla sesiones
@@ -117,7 +146,7 @@ pip install -e ".[dev]"
 python -m pytest -q
 ```
 
-192 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
+222 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
 
 ```
 sport_report/

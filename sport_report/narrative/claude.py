@@ -178,6 +178,13 @@ def redactar(
     modelo = modelo or config.ANTHROPIC_MODEL
     clave = api_key if api_key is not None else config.ANTHROPIC_API_KEY
 
+    # La serie de 16 semanas queda fuera del prompt a proposito: cualquier cosa
+    # que el modelo dijera sobre ella ("tercera semana consecutiva subiendo")
+    # seria una conclusion derivada, no una cifra del motor de calculo, y la
+    # verificacion posterior solo sabe comprobar numeros. El grafico se dibuja
+    # en codigo, que para eso no necesita narrador.
+    datos = {k: v for k, v in datos.items() if k != "volumen_historico"}
+
     if cliente is None:
         if not clave:
             log.warning("sin ANTHROPIC_API_KEY: el reporte se envia sin narrativa")

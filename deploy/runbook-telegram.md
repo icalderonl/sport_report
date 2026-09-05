@@ -17,6 +17,8 @@ BotFather, elige tu bot y pega:
 setplan - Carga el plan de la semana
 plan - Muestra el plan vigente y el estado de fuerza
 fuerza - Marca una sesion de fuerza como cumplida
+progreso - Como va la semana en curso
+volumen - Grafico de volumen de las ultimas 16 semanas
 estado - Que semana reportaria el cron ahora
 ayuda - Ayuda
 ```

@@ -80,29 +80,43 @@ def construir(
     repo: Repo,
     plan_store: PlanStore | None = None,
     umbrales: Umbrales = UMBRALES,
+    hasta: date | None = None,
 ) -> dict[str, Any]:
+    """`hasta` (inclusive) construye el reporte de una semana en curso.
+
+    Todas las ventanas moviles terminan ahi en vez de en el domingo, para que
+    ACWR y Monotony no cuenten como descanso dias que aun no han llegado.
+    """
     plan_store = plan_store or PlanStore()
     anclado = plan_store.para_semana(rango)
     plan = anclado.plan if anclado else None
 
-    sesiones = repo.sesiones_entre(rango.inicio, rango.fin)
+    corte = hasta if hasta is not None and hasta < rango.fin else None
+    fin_ventana = corte or rango.fin
+    dias_semana = ((corte - rango.inicio).days + 1) if corte else 7
+
+    sesiones = repo.sesiones_entre(rango.inicio, fin_ventana)
     previa = semana_anterior(rango)
     sesiones_previas = repo.sesiones_entre(previa.inicio, previa.fin)
 
-    # Ventana de 28 dias terminando el domingo de la semana reportada.
-    ini_cronica = rango.fin - timedelta(days=m_acwr.DIAS_CRONICA - 1)
-    carga_por_dia = repo.carga_diaria(ini_cronica, rango.fin)
+    # Ventana de 28 dias terminando el ultimo dia considerado.
+    ini_cronica = fin_ventana - timedelta(days=m_acwr.DIAS_CRONICA - 1)
+    carga_por_dia = repo.carga_diaria(ini_cronica, fin_ventana)
     sin_carga = sum(1 for s in sesiones if not s.es_fuerza and s.carga is None)
+    primera_fecha = repo.primera_fecha()
 
     r_acwr = m_acwr.calcular(
         carga_por_dia,
-        fin=rango.fin,
-        primera_fecha=repo.primera_fecha(),
+        fin=fin_ventana,
+        primera_fecha=primera_fecha,
         sesiones_sin_carga=sin_carga,
         umbrales=umbrales,
     )
-    r_foster = m_foster.calcular(carga_por_dia, inicio=rango.inicio, umbrales=umbrales)
-    r_adh = m_adh.calcular(plan, rango, sesiones, umbrales=umbrales)
+    r_foster = m_foster.calcular(
+        carga_por_dia, inicio=rango.inicio, umbrales=umbrales, dias=dias_semana
+    )
+    r_adh = m_adh.calcular(plan, rango, sesiones, umbrales=umbrales, hasta=corte)
+    serie = repo.volumen_semanal(fin_ventana, config.SEMANAS_GRAFICO)
 
     impreciso = any(s.carga_impreciso for s in sesiones)
     avisos: list[str] = list(r_adh.avisos)
@@ -134,11 +148,20 @@ def construir(
             "fin": rango.fin.isoformat(),
             "numero_plan": plan.semana if plan else None,
             "plan_cargado": plan is not None,
+            "en_curso": corte is not None,
+            "hasta": fin_ventana.isoformat(),
+            "dias_transcurridos": dias_semana,
         },
         "volumen": {
             "planificado_km": r_adh.volumen_planificado_km,
             "real_km": r_adh.volumen_real_km,
             "pct": r_adh.volumen_pct,
+            "estimado_km": r_adh.volumen_estimado_km,
+        },
+        "volumen_historico": {
+            "semanas": [{"lunes": d.isoformat(), "km": v} for d, v in serie],
+            "primera_fecha_con_datos": primera_fecha.isoformat() if primera_fecha else None,
+            "ultima_en_curso": corte is not None,
         },
         "carga": {
             "semanal": r_foster.carga_semanal,

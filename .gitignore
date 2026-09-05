@@ -3,12 +3,10 @@ __pycache__/
 .venv/
 venv/
 .env
-data/*.db
-data/*.db-wal
-data/*.db-shm
-data/tokens.json
-data/plan_actual.json
-data/planes/
-data/reportes/
+# Todo data/ queda fuera, sin excepciones. Listar archivo por archivo dejaba
+# pasar cualquier variante (un tokens.json.viejo, un respaldo, un .bak) y ahi
+# adentro viven el refresh_token de Strava y el historico.
+data/
+
 logs/
 .pytest_cache/

@@ -45,7 +45,13 @@ MARCAS = {
     "actividad_no_planificada": "!",
     "fuerza_cumplida": "OK",
     "fuerza_pendiente": "..",
+    "pendiente": " ",
 }
+
+# Bloque lleno U+2588. Telegram lo renderiza bien; en consola Windows hace falta
+# stdout en UTF-8 (run_weekly lo fuerza al arrancar).
+BARRA = "█"
+ANCHO_GRAFICO = 16
 
 MESES = (
     "enero", "febrero", "marzo", "abril", "mayo", "junio",
@@ -75,10 +81,65 @@ def _bloque_confiable(datos: dict, lineas: list[str]) -> None:
         lineas.append(f"  (no confiable: {datos['motivo']})")
 
 
+def _dia_mes(iso: str) -> str:
+    a, m, d = iso.split("-")
+    return f"{d}/{m}"
+
+
+def _lunes_iso(iso: str) -> str:
+    """Lunes de la semana que contiene esa fecha, en ISO."""
+    from datetime import date, timedelta
+
+    d = date.fromisoformat(iso)
+    return (d - timedelta(days=d.weekday())).isoformat()
+
+
+def grafico_volumen(historico: dict, ancho: int = ANCHO_GRAFICO) -> str:
+    """Barras de km por semana, escaladas a la semana de mayor volumen.
+
+    Sin dependencias y sin imagenes: el sistema entrega texto por Telegram y un
+    grafico de barras en caracteres se lee igual de bien en el telefono.
+    """
+    semanas = historico.get("semanas") or []
+    if not semanas:
+        return ""
+    maximo = max(s["km"] for s in semanas)
+    if maximo <= 0:
+        return ""
+
+    ultima_en_curso = bool(historico.get("ultima_en_curso"))
+    L = [f"VOLUMEN ULTIMAS {len(semanas)} SEMANAS (km)"]
+    for i, s in enumerate(semanas):
+        km = s["km"]
+        largo = int(round(km / maximo * ancho))
+        # Una semana con kilometros no puede dibujarse vacia: se confundiria
+        # con una de descanso total.
+        if km > 0 and largo == 0:
+            largo = 1
+        # Sin esta marca, la semana a medio correr parece un desplome de volumen.
+        cola = " (en curso)" if ultima_en_curso and i == len(semanas) - 1 else ""
+        L.append(
+            f"  {_dia_mes(s['lunes'])} {BARRA * largo}{' ' * (ancho - largo)} {km:g}{cola}"
+        )
+
+    # Se compara el LUNES de la primera fecha con datos, no la fecha suelta: si
+    # el historico empieza un martes, esa semana igual tiene datos y avisar
+    # sobraria.
+    desde = historico.get("primera_fecha_con_datos")
+    if desde and _lunes_iso(desde) > semanas[0]["lunes"]:
+        L.append(f"  (sin historico antes del {_dia_mes(desde)}: esas semanas van en cero)")
+    return "\n".join(L)
+
+
 def _linea_dia(d: dict) -> str:
     marca = MARCAS.get(d["estado"], "?")
     dia = NOMBRE_DIA.get(d["dia"], d["dia"])
     tipo = d["tipo_plan"]
+
+    if d["estado"] == "pendiente":
+        u = d["unidad"] or ""
+        objetivo = f"{tipo} {_num(d['objetivo'], u)}" if d["objetivo"] is not None else tipo
+        return f"[{marca}] {dia}  {objetivo} (pendiente)"
 
     if tipo == "rest":
         cola = d["nota"] if d["nota"] else "descanso"
@@ -95,15 +156,23 @@ def _linea_dia(d: dict) -> str:
     return f"[{marca}] {dia}  {tipo} {obj} -> {_num(d['real'], u)} ({_num(d['pct'], '%')})"
 
 
-def formatear_reporte(datos: dict, narrativa: str | None = None) -> str:
+def formatear_reporte(
+    datos: dict, narrativa: str | None = None, con_grafico: bool = True
+) -> str:
     """Arma el mensaje de Telegram a partir del JSON del motor de calculo.
 
     No calcula nada: todo lo que aparece aca sale del JSON.
     """
     s = datos["semana"]
+    en_curso = bool(s.get("en_curso"))
     L: list[str] = []
 
-    cabecera = f"REPORTE SEMANAL - {_fecha_larga(s['inicio'])} al {_fecha_larga(s['fin'])}"
+    titulo = "AVANCE DE LA SEMANA" if en_curso else "REPORTE SEMANAL"
+    cabecera = f"{titulo} - {_fecha_larga(s['inicio'])} al {_fecha_larga(s['fin'])}"
+    if en_curso:
+        cabecera += (
+            f"\nAl {_fecha_larga(s['hasta'])}: {s['dias_transcurridos']} de 7 dias"
+        )
     if s.get("numero_plan") is not None:
         cabecera += f"\nPlan: semana {s['numero_plan']}"
     L.append(cabecera)
@@ -113,13 +182,21 @@ def formatear_reporte(datos: dict, narrativa: str | None = None) -> str:
 
     vol = datos["volumen"]
     carga = datos["carga"]
+    sufijo_plan = " planificados hasta hoy" if en_curso else " planificados"
     v = [
         "VOLUMEN",
-        f"  {_num(vol['real_km'], ' km')} reales / {_num(vol['planificado_km'], ' km')} "
-        f"planificados ({_num(vol['pct'], '%')})",
-        f"  carga semanal {_num(carga['semanal'])}"
-        + (" (imprecisa)" if carga.get("impreciso") else ""),
+        f"  {_num(vol['real_km'], ' km')} reales / {_num(vol['planificado_km'], ' km')}"
+        f"{sufijo_plan} ({_num(vol['pct'], '%')})",
     ]
+    if vol.get("estimado_km"):
+        v.append(
+            f"  ({_num(vol['estimado_km'], ' km')} del plan estimados de sesiones "
+            "prescritas en minutos)"
+        )
+    v.append(
+        f"  carga semanal {_num(carga['semanal'])}"
+        + (" (imprecisa)" if carga.get("impreciso") else "")
+    )
     L.append("\n".join(v))
 
     a = datos["acwr"]
@@ -160,6 +237,11 @@ def formatear_reporte(datos: dict, narrativa: str | None = None) -> str:
         fz = adh["fuerza"]
         if fz["planificadas"]:
             L.append(f"FUERZA\n  {fz['cumplidas']}/{fz['planificadas']} cumplidas")
+
+    if con_grafico and datos.get("volumen_historico"):
+        g = grafico_volumen(datos["volumen_historico"])
+        if g:
+            L.append(g)
 
     if datos["alertas"]:
         L.append("\n".join(["ALERTAS"] + [f"  ! {x}" for x in datos["alertas"]]))

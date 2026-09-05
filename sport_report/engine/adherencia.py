@@ -15,6 +15,14 @@ distinciones que la spec exige mantener separadas:
 El volumen real de la semana se calcula aparte, sumando el 100% de la distancia
 de todas las sesiones: la recuperacion sigue contando para el volumen aunque no
 cuente para el % de adherencia de esa sesion.
+
+Para que el porcentaje de volumen compare la misma base en ambos lados, las
+sesiones prescritas en minutos aportan sus km estimados al planificado (ver
+`Sesion.km_para_volumen`). Sin eso el numerador incluye los km de una sesion que
+el denominador ignora, y el porcentaje sale inflado.
+
+Con `hasta` se evalua una semana en curso: los dias posteriores quedan en estado
+`pendiente`, fuera del porcentaje de sesiones y fuera del volumen planificado.
 """
 from __future__ import annotations
 
@@ -37,6 +45,8 @@ DESCANSO_OK = "descanso_respetado"
 DESCANSO_ROTO = "actividad_no_planificada"
 FUERZA_OK = "fuerza_cumplida"
 FUERZA_PENDIENTE = "fuerza_pendiente"
+# Solo aparece al consultar una semana en curso: el dia todavia no llega.
+PENDIENTE = "pendiente"
 
 
 @dataclass(frozen=True)
@@ -73,11 +83,13 @@ class ResumenAdherencia:
     volumen_planificado_km: float
     volumen_real_km: float
     volumen_pct: float | None
-    sesiones_evaluables: int
-    sesiones_cumplidas: int
-    dias_sin_dato: int
-    fuerza_planificadas: int
-    fuerza_cumplidas: int
+    volumen_estimado_km: float = 0.0
+    dias_transcurridos: int = 7
+    sesiones_evaluables: int = 0
+    sesiones_cumplidas: int = 0
+    dias_sin_dato: int = 0
+    fuerza_planificadas: int = 0
+    fuerza_cumplidas: int = 0
     no_planificadas: tuple[str, ...] = ()
     avisos: tuple[str, ...] = field(default_factory=tuple)
 
@@ -87,12 +99,19 @@ class ResumenAdherencia:
             return None
         return round(self.sesiones_cumplidas / self.sesiones_evaluables * 100, 1)
 
+    @property
+    def en_curso(self) -> bool:
+        return self.dias_transcurridos < len(ORDEN_DIAS)
+
     def to_json(self) -> dict[str, Any]:
         return {
             "dias": [d.to_json() for d in self.dias],
             "volumen_planificado_km": self.volumen_planificado_km,
             "volumen_real_km": self.volumen_real_km,
             "volumen_pct": self.volumen_pct,
+            "volumen_estimado_km": self.volumen_estimado_km,
+            "dias_transcurridos": self.dias_transcurridos,
+            "en_curso": self.en_curso,
             "sesiones_evaluables": self.sesiones_evaluables,
             "sesiones_cumplidas": self.sesiones_cumplidas,
             "pct_global": self.pct_global,
@@ -221,12 +240,33 @@ def _evaluar_dia(
     )
 
 
+def _dia_pendiente(sesion_plan: Sesion, fecha: date) -> DiaAdherencia:
+    """Dia de una semana en curso que todavia no llega. No es incumplimiento."""
+    unidad = "km" if sesion_plan.objetivo_km() is not None else (
+        "min" if sesion_plan.objetivo_min() is not None else None
+    )
+    objetivo = sesion_plan.objetivo_km() if unidad == "km" else sesion_plan.objetivo_min()
+    return DiaAdherencia(
+        dia=sesion_plan.dia,
+        fecha=fecha.isoformat(),
+        tipo_plan=sesion_plan.tipo,
+        objetivo=objetivo,
+        unidad=unidad,
+        real=None,
+        pct=None,
+        estado=PENDIENTE,
+        nota="todavia no llega",
+    )
+
+
 def calcular(
     plan: PlanSemanal | None,
     rango: RangoSemana,
     sesiones: Iterable[SesionReal],
     umbrales: Umbrales = UMBRALES,
+    hasta: date | None = None,
 ) -> ResumenAdherencia:
+    """`hasta` (inclusive) evalua una semana en curso; None evalua los 7 dias."""
     por_fecha: dict[date, list[SesionReal]] = {}
     for s in sesiones:
         por_fecha.setdefault(s.fecha, []).append(s)
@@ -243,17 +283,20 @@ def calcular(
             volumen_planificado_km=0.0,
             volumen_real_km=volumen_real,
             volumen_pct=None,
-            sesiones_evaluables=0,
-            sesiones_cumplidas=0,
-            dias_sin_dato=0,
-            fuerza_planificadas=0,
-            fuerza_cumplidas=0,
+            dias_transcurridos=sum(
+                1 for d in rango.dias() if hasta is None or d <= hasta
+            ),
             avisos=("no habia plan cargado para esta semana: solo se reporta lo real",),
         )
 
     dias: list[DiaAdherencia] = []
+    transcurridos: list[str] = []
     for i, letra in enumerate(ORDEN_DIAS):
         fecha = rango.inicio + timedelta(days=i)
+        if hasta is not None and fecha > hasta:
+            dias.append(_dia_pendiente(plan.sesiones[letra], fecha))
+            continue
+        transcurridos.append(letra)
         dias.append(
             _evaluar_dia(
                 plan.sesiones[letra],
@@ -266,18 +309,37 @@ def calcular(
 
     evaluables = [d for d in dias if d.estado in (CUMPLIDA, BAJO_PLAN, SOBRE_PLAN, SIN_SESION)]
     cumplidas = [d for d in evaluables if d.estado == CUMPLIDA]
-    fuerza = [d for d in dias if d.tipo_plan == "fuerza"]
+    fuerza = [d for d in dias if d.tipo_plan == "fuerza" and d.estado != PENDIENTE]
 
-    planificado = plan.volumen_planificado_km()
+    # El volumen planificado se limita a los dias transcurridos: comparar lo
+    # corrido hasta hoy contra el total de la semana daria siempre "bajo plan".
+    planificado = plan.volumen_planificado_km(transcurridos)
+    estimado = plan.volumen_estimado_km(transcurridos)
+
+    # Que parte del planificado es estimada no va como aviso: se muestra en la
+    # propia linea de volumen, pegada a la cifra, y repetirlo abajo es ruido.
+    # El dato sigue en el JSON como `volumen.estimado_km`.
+    avisos: list[str] = []
+    sin_estimar = plan.dias_sin_estimar(transcurridos)
+    if sin_estimar:
+        nombres = ", ".join(sin_estimar)
+        avisos.append(
+            f"dia(s) {nombres}: prescritos en minutos y sin ritmo con que estimar km, "
+            "quedan fuera del volumen planificado"
+        )
+
     return ResumenAdherencia(
         dias=tuple(dias),
         volumen_planificado_km=planificado,
         volumen_real_km=volumen_real,
         volumen_pct=round(volumen_real / planificado * 100, 1) if planificado else None,
+        volumen_estimado_km=estimado,
+        dias_transcurridos=len(transcurridos),
         sesiones_evaluables=len(evaluables),
         sesiones_cumplidas=len(cumplidas),
         dias_sin_dato=sum(1 for d in dias if d.estado == DATO_FALTANTE),
         fuerza_planificadas=len(fuerza),
         fuerza_cumplidas=sum(1 for d in fuerza if d.estado == FUERZA_OK),
         no_planificadas=tuple(d.dia for d in dias if d.estado == DESCANSO_ROTO),
+        avisos=tuple(avisos),
     )

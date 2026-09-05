@@ -152,6 +152,12 @@ def _args(argv: list[str] | None):
 
 def main(argv: list[str] | None = None) -> int:
     setup("run_weekly")
+    # El grafico de volumen usa bloques Unicode; sin esto --dry-run revienta en
+    # una consola Windows con cp1252.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):  # stdout redirigido o ya fijado
+        pass
     a = _args(argv)
     rango = semana_de(date.fromisoformat(a.semana)) if a.semana else semana_a_reportar()
     log.info("corrida para la semana %s", rango)

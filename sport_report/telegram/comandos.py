@@ -6,6 +6,8 @@ Asi los comandos se testean enteros sin red ni bot token.
 from __future__ import annotations
 
 import unicodedata
+from datetime import date
+from typing import Any
 
 from ..fechas import semana_a_reportar
 from ..plan.errors import PlanInvalido
@@ -35,6 +37,12 @@ AYUDA = """Comandos:
 /plan — muestra el plan cargado y el estado de las sesiones de fuerza.
 /fuerza <dia> — marca una fuerza como cumplida (L M W J V S D o el nombre).
   Solo hace falta si la sesion no quedo registrada en Strava.
+/progreso — como va la semana EN CURSO, contando solo los dias que ya pasaron.
+  Sincroniza con Strava y calcula igual que el reporte del lunes, pero los dias
+  que faltan quedan como pendientes y no cuentan como incumplidos.
+  Sin resumen narrativo: es una consulta rapida, no el reporte semanal.
+/volumen — grafico de los kilometros por semana de las ultimas 16 semanas.
+/estado — que semana reportaria el cron ahora y con que plan.
 """
 
 
@@ -121,6 +129,98 @@ def cmd_fuerza(store: PlanStore, arg: str) -> str:
     except DiaSinFuerza as exc:
         return _cap(str(exc))
     return f"Fuerza del {DIAS[dia]} marcada como cumplida.\n\n{resumen(anclado.plan, con_fuerza=True)}"
+
+
+def cmd_progreso(
+    store: PlanStore,
+    repo: Any = None,
+    ingesta: Any = None,
+    hoy: date | None = None,
+    sincronizar: bool = True,
+) -> str:
+    """Estado de la semana en curso, sin contar los dias que todavia no llegan.
+
+    Mismo motor de calculo que el reporte del lunes, con `hasta=hoy`. Los
+    imports pesados van adentro para que este modulo se siga pudiendo importar
+    (y testear) sin httpx ni el SDK de Strava.
+    """
+    from ..engine import report
+    from ..fechas import hoy_local, semana_de
+    from .formato import formatear_reporte
+
+    dia = hoy or hoy_local()
+    rango = semana_de(dia)
+
+    repo_propio = repo is None
+    if repo_propio:
+        from ..db.repo import Repo
+
+        repo = Repo()
+
+    cliente = None
+    avisos: list[str] = []
+    try:
+        if ingesta is None and sincronizar:
+            try:
+                from ..strava.client import StravaClient
+                from ..strava.ingest import Ingesta
+
+                cliente = StravaClient()
+                ingesta = Ingesta(cliente=cliente, repo=repo)
+            except Exception as exc:  # sin credenciales, sin red, sin SDK
+                avisos.append(f"no se pudo abrir la conexion con Strava ({exc})")
+
+        if ingesta is not None:
+            try:
+                ingesta.sincronizar(rango.inicio, dia)
+            except Exception as exc:
+                # Igual que la corrida semanal: se responde con lo que hay.
+                avisos.append(
+                    f"no se pudo sincronizar con Strava ({exc}); se muestra lo ya guardado"
+                )
+
+        datos = report.construir(rango, repo, store, hasta=dia)
+        if avisos:
+            datos["avisos_datos"] = list(datos["avisos_datos"]) + avisos
+        return formatear_reporte(datos)
+    finally:
+        if cliente is not None:
+            cliente.cerrar()
+        if repo_propio:
+            repo.cerrar()
+
+
+def cmd_volumen(repo: Any = None, hoy: date | None = None, semanas: int | None = None) -> str:
+    """Grafico de kilometros por semana de las ultimas `semanas`."""
+    from .. import config
+    from ..fechas import hoy_local
+    from .formato import grafico_volumen
+
+    dia = hoy or hoy_local()
+    n = semanas or config.SEMANAS_GRAFICO
+
+    repo_propio = repo is None
+    if repo_propio:
+        from ..db.repo import Repo
+
+        repo = Repo()
+    try:
+        serie = repo.volumen_semanal(dia, n)
+        primera = repo.primera_fecha()
+    finally:
+        if repo_propio:
+            repo.cerrar()
+
+    grafico = grafico_volumen(
+        {
+            "semanas": [{"lunes": d.isoformat(), "km": v} for d, v in serie],
+            "primera_fecha_con_datos": primera.isoformat() if primera else None,
+        }
+    )
+    return grafico or (
+        "Todavia no hay kilometros registrados.\n"
+        "Corre: python -m sport_report.strava.backfill 120"
+    )
 
 
 def cmd_estado(store: PlanStore) -> str:

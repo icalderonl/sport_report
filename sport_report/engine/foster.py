@@ -50,10 +50,16 @@ def calcular(
     carga_por_dia: Mapping[date, float],
     inicio: date,
     umbrales: Umbrales = UMBRALES,
+    dias: int = DIAS,
 ) -> ResultadoFoster:
-    """`inicio` es el primer dia de la ventana de 7 (el lunes de la semana)."""
+    """`inicio` es el primer dia de la ventana (el lunes de la semana).
+
+    `dias` < 7 calcula sobre una semana en curso. El resultado NO es comparable
+    con el de una semana completa —la media y la desviacion se toman sobre menos
+    valores— asi que se devuelve marcado como no confiable.
+    """
     diarias = [
-        float(carga_por_dia.get(inicio + timedelta(days=i), 0.0)) for i in range(DIAS)
+        float(carga_por_dia.get(inicio + timedelta(days=i), 0.0)) for i in range(dias)
     ]
     total = round(sum(diarias), 1)
     media = statistics.fmean(diarias)
@@ -82,8 +88,11 @@ def calcular(
 
     monotony = round(media / desv, 2)
     strain = round(total * monotony, 1)
+    parcial = dias < DIAS
     alerta = ""
-    if monotony > umbrales.monotony_alta:
+    # Sobre una semana incompleta la cifra no es comparable con el umbral, que
+    # esta pensado para 7 dias: no se alerta.
+    if monotony > umbrales.monotony_alta and not parcial:
         alerta = (
             f"Monotony {monotony} sobre el umbral {umbrales.monotony_alta}: "
             "semana poco variada"
@@ -95,7 +104,7 @@ def calcular(
         desviacion=round(desv, 2),
         monotony=monotony,
         strain=strain,
-        confiable=True,
-        motivo="",
+        confiable=not parcial,
+        motivo=f"semana en curso: {dias} de {DIAS} dias" if parcial else "",
         alerta=alerta,
     )

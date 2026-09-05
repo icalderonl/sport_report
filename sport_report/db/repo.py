@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -125,6 +125,32 @@ class Repo:
             (desde.isoformat(), hasta.isoformat()),
         ).fetchone()
         return int(f["n"])
+
+    def volumen_semanal(self, hasta: date, semanas: int) -> list[tuple[date, float]]:
+        """km por semana lunes-domingo, la ultima la que contiene `hasta`.
+
+        Devuelve siempre `semanas` entradas, con 0.0 donde no hay datos. Esa
+        distincion importa: una semana en cero puede ser descanso real o falta
+        de historico, y quien dibuja el grafico no puede saberlo — por eso el
+        reporte avisa aparte desde que fecha hay datos.
+        """
+        lunes_final = hasta - timedelta(days=hasta.weekday())
+        inicio = lunes_final - timedelta(weeks=semanas - 1)
+        filas = self.con.execute(
+            "SELECT fecha_local, distancia_km FROM sesiones "
+            "WHERE fecha_local BETWEEN ? AND ? AND distancia_km IS NOT NULL",
+            (inicio.isoformat(), (lunes_final + timedelta(days=6)).isoformat()),
+        ).fetchall()
+
+        acum: dict[date, float] = {
+            inicio + timedelta(weeks=i): 0.0 for i in range(semanas)
+        }
+        for f in filas:
+            d = date.fromisoformat(f["fecha_local"])
+            lunes = d - timedelta(days=d.weekday())
+            if lunes in acum:
+                acum[lunes] += float(f["distancia_km"])
+        return [(k, round(v, 1)) for k, v in sorted(acum.items())]
 
     def primera_fecha(self) -> date | None:
         f = self.con.execute("SELECT MIN(fecha_local) AS m FROM sesiones").fetchone()

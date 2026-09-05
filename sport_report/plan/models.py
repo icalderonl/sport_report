@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
+
+from ..config import ESTIMACION, Estimacion
 
 DIAS: dict[str, str] = {
     "L": "lunes",
@@ -138,6 +140,44 @@ class Sesion:
     def objetivo_min(self) -> float | None:
         return self.cantidad if self.unidad == "min" else None
 
+    def ritmo_estimacion_s_km(self, est: Estimacion = ESTIMACION) -> int | None:
+        """Ritmo con el que convertir minutos a km. None si no hay con que.
+
+        El ritmo escrito en el plan manda sobre el ritmo por defecto: si el
+        atleta se tomo el trabajo de prescribirlo, es mas especifico que
+        cualquier valor de configuracion. De una ventana (`@6:15/5:45`) se toma
+        el punto medio.
+        """
+        if self.ritmo is not None:
+            return round((self.ritmo.min_s_km + self.ritmo.max_s_km) / 2)
+        if self.tipo in est.tipos_con_ritmo_por_defecto:
+            return est.ritmo_easy_s_km
+        return None
+
+    def objetivo_km_estimado(self, est: Estimacion = ESTIMACION) -> float | None:
+        """km derivados de una sesion prescrita en minutos. None si no aplica."""
+        if self.objetivo_km() is not None:
+            return None  # ya viene en km, no hay nada que estimar
+        minutos = self.objetivo_min()
+        if minutos is None:
+            return None
+        ritmo = self.ritmo_estimacion_s_km(est)
+        if not ritmo or ritmo <= 0:
+            return None
+        return round(minutos * 60.0 / ritmo, 2)
+
+    def km_para_volumen(self, est: Estimacion = ESTIMACION) -> tuple[float | None, bool]:
+        """(km, es_estimado) para el agregado semanal de volumen.
+
+        Distinto de `objetivo_km()`, que es lo que se compara dia a dia: la
+        adherencia diaria sigue evaluandose en la unidad nativa de la sesion.
+        """
+        km = self.objetivo_km()
+        if km is not None:
+            return km, False
+        estimado = self.objetivo_km_estimado(est)
+        return (estimado, True) if estimado is not None else (None, False)
+
     def to_json(self) -> dict[str, Any]:
         return {
             "dia": self.dia,
@@ -149,6 +189,7 @@ class Sesion:
             "estructura": self.estructura.to_json() if self.estructura else None,
             "objetivo_km": self.objetivo_km(),
             "objetivo_min": self.objetivo_min(),
+            "objetivo_km_estimado": self.objetivo_km_estimado(),
             "crudo": self.crudo,
         }
 
@@ -164,14 +205,43 @@ class PlanSemanal:
     def dias_fuerza(self) -> tuple[str, ...]:
         return tuple(d for d in ORDEN_DIAS if self.sesiones[d].es_fuerza)
 
-    def volumen_planificado_km(self) -> float:
-        """Derivado siempre de la suma de sesiones; nunca se declara aparte."""
+    def volumen_planificado_km(
+        self, dias: Sequence[str] | None = None, est: Estimacion = ESTIMACION
+    ) -> float:
+        """Derivado siempre de la suma de sesiones; nunca se declara aparte.
+
+        Incluye los km estimados de las sesiones prescritas en minutos, para que
+        el porcentaje semanal compare la misma base que el volumen real.
+        `dias` limita el calculo a los dias transcurridos (semana en curso).
+        """
         total = 0.0
-        for d in ORDEN_DIAS:
-            km = self.sesiones[d].objetivo_km()
+        for d in dias if dias is not None else ORDEN_DIAS:
+            km, _ = self.sesiones[d].km_para_volumen(est)
             if km:
                 total += km
         return round(total, 2)
+
+    def volumen_estimado_km(
+        self, dias: Sequence[str] | None = None, est: Estimacion = ESTIMACION
+    ) -> float:
+        """Parte del volumen planificado que sale de una estimacion, no del plan."""
+        total = 0.0
+        for d in dias if dias is not None else ORDEN_DIAS:
+            km, estimado = self.sesiones[d].km_para_volumen(est)
+            if km and estimado:
+                total += km
+        return round(total, 2)
+
+    def dias_sin_estimar(
+        self, dias: Sequence[str] | None = None, est: Estimacion = ESTIMACION
+    ) -> tuple[str, ...]:
+        """Dias prescritos en minutos que no se pudieron convertir a km."""
+        return tuple(
+            d
+            for d in (dias if dias is not None else ORDEN_DIAS)
+            if self.sesiones[d].objetivo_min() is not None
+            and self.sesiones[d].objetivo_km_estimado(est) is None
+        )
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -181,6 +251,7 @@ class PlanSemanal:
                 d: self.fuerza_completada.get(d, False) for d in self.dias_fuerza()
             },
             "volumen_planificado_km": self.volumen_planificado_km(),
+            "volumen_estimado_km": self.volumen_estimado_km(),
             "crudo": self.crudo,
         }
 

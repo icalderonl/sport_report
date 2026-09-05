@@ -82,6 +82,17 @@ def on_estado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
 
 
 @_handler
+def on_progreso(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
+    # Consulta Strava, asi que tarda unos segundos mas que el resto.
+    return comandos.cmd_progreso(_store)
+
+
+@_handler
+def on_volumen(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
+    return comandos.cmd_volumen()
+
+
+@_handler
 def on_desconocido(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
     return "Comando no reconocido.\n\n" + comandos.AYUDA
 
@@ -97,6 +108,8 @@ def main() -> None:
     app.add_handler(CommandHandler("plan", on_plan))
     app.add_handler(CommandHandler("fuerza", on_fuerza))
     app.add_handler(CommandHandler("estado", on_estado))
+    app.add_handler(CommandHandler(["progreso", "avance"], on_progreso))
+    app.add_handler(CommandHandler("volumen", on_volumen))
     app.add_handler(MessageHandler(filters.COMMAND, on_desconocido))
 
     log.info("bot iniciado (long polling)")

@@ -63,8 +63,29 @@ class Carga:
     decoupling_min_puntos: int = 600
 
 
+@dataclass(frozen=True)
+class Estimacion:
+    """Como convertir a km una sesion que el plan prescribe en minutos.
+
+    Sin esto el % de volumen semanal mezcla dos bases: el numerador suma los km
+    reales de TODAS las sesiones y el denominador solo las prescritas en km, asi
+    que una sesion por tiempo infla el porcentaje.
+
+    Prioridad: el ritmo escrito en el plan manda; si no hay, se usa el ritmo por
+    defecto pero SOLO para sesiones `easy`. Una sesion por tiempo de otro tipo y
+    sin ritmo no se estima: queda fuera del volumen planificado y con aviso.
+    """
+
+    ritmo_easy_s_km: int = 420  # 7:00 min/km
+    tipos_con_ritmo_por_defecto: tuple[str, ...] = ("easy",)
+
+
 UMBRALES = Umbrales()
 CARGA = Carga()
+ESTIMACION = Estimacion()
+
+# Semanas que muestra el grafico de volumen del reporte.
+SEMANAS_GRAFICO = 16
 
 STRAVA_CLIENT_ID = os.getenv("STRAVA_CLIENT_ID", "")
 STRAVA_CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET", "")

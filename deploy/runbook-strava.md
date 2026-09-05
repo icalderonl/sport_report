@@ -88,7 +88,10 @@ los datos ya estén en Strava.
 python -m sport_report.strava.backfill 35
 ```
 
-Trae 35 días con 1.5 s de pausa entre requests (~40 llamadas, holgado dentro de
+Para que el gráfico de volumen de 16 semanas salga completo hacen falta 112
+días, así que conviene `backfill 120` de entrada. El coste es una sola vez.
+
+Trae los días pedidos con 1.5 s de pausa entre requests (~40 llamadas, holgado dentro de
 las 100 por 15 minutos). Es idempotente: se puede repetir sin duplicar filas ni
 volver a bajar streams ya procesados.
 
