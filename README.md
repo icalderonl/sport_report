@@ -105,8 +105,10 @@ km reales de todas las sesiones y el denominador solo las prescritas en km, así
 que una sesión por tiempo lo infla. El ritmo escrito en el plan manda; si no hay,
 se usa 7:00/km **solo** para sesiones `easy` (ajustable en `config.Estimacion`).
 Una sesión por tiempo de otro tipo y sin ritmo no se estima: queda fuera del
-volumen planificado y con aviso. La adherencia **día a día** no cambia — cada día
-se sigue comparando en su unidad nativa.
+volumen planificado y `/setplan` lo avisa al cargarlo. La adherencia **día a día**
+no cambia — cada día se sigue comparando en su unidad nativa. Como el total puede
+incluir km que no están escritos en ninguna línea del plan, el resumen dice
+cuántos son estimados.
 
 **Un día que todavía no llega no es un incumplimiento.** `/progreso` corre el
 mismo motor con `hasta=hoy`: los días futuros quedan en estado `pendiente`, fuera
@@ -172,7 +174,7 @@ pip install -e ".[dev]"
 python -m pytest -q
 ```
 
-225 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
+233 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
 
 ```
 sport_report/
@@ -192,9 +194,3 @@ sport_report/
 deploy/             instalar.sh, unidades systemd y los cuatro runbooks
 assets/             logo del servicio y el script que lo regenera
 ```
-
-### Limitación conocida
-
-`diagnostico` marca `FALLA — falta tokens.json` aunque el sistema pueda arrancar
-con `STRAVA_REFRESH_TOKEN` sembrado en `.env`: mira el archivo y no considera esa
-semilla. Se corrige solo en cuanto la primera corrida escribe `data/tokens.json`.

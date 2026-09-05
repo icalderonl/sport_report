@@ -39,6 +39,36 @@ def _secreto(nombre: str, valor: str, obligatorio: bool = True) -> None:
         linea(FALLA if obligatorio else AVISO, nombre, "sin configurar")
 
 
+def estado_tokens(
+    tokens: dict | None, refresh_env: str = "", ahora: float | None = None
+) -> tuple[str, str]:
+    """(marca, detalle) del estado de los tokens de Strava.
+
+    Funcion aparte para poder testearla: la version anterior miraba solo el
+    archivo y daba FALLA cuando el sistema en realidad podia arrancar con el
+    STRAVA_REFRESH_TOKEN sembrado en .env.
+    """
+    if not tokens:
+        if refresh_env:
+            return AVISO, (
+                f"todavia no existe {config.TOKENS_PATH.name}, pero hay "
+                "STRAVA_REFRESH_TOKEN en .env: la primera corrida lo usa y crea el "
+                "archivo. Desde ahi manda el archivo y .env deja de leerse"
+            )
+        return FALLA, (
+            f"falta {config.TOKENS_PATH.name} y no hay STRAVA_REFRESH_TOKEN en .env; "
+            "corre python -m sport_report.strava.autorizar"
+        )
+
+    if not tokens.get("refresh_token"):
+        return FALLA, "sin refresh_token: hay que re-autorizar"
+
+    restante = int(tokens.get("expires_at", 0)) - (ahora if ahora is not None else time.time())
+    if restante > 0:
+        return OK, f"access_token vigente {int(restante / 60)} min mas"
+    return OK, "access_token vencido (se refresca solo en la corrida)"
+
+
 def main() -> int:
     print(f"Diagnostico de sport_report  -  {ahora_local().isoformat(timespec='seconds')}")
     print(f"Raiz: {config.ROOT}")
@@ -74,22 +104,10 @@ def main() -> int:
     _secreto("TELEGRAM_CHAT_ID", config.TELEGRAM_CHAT_ID)
     _secreto("ANTHROPIC_API_KEY", config.ANTHROPIC_API_KEY, obligatorio=False)
 
-    tokens = leer_json(config.TOKENS_PATH)
-    if not tokens:
-        linea(
-            FALLA,
-            "tokens de Strava",
-            f"falta {config.TOKENS_PATH.name}; corre python -m sport_report.strava.autorizar",
-        )
-    else:
-        vence = int(tokens.get("expires_at", 0))
-        restante = vence - time.time()
-        if not tokens.get("refresh_token"):
-            linea(FALLA, "tokens de Strava", "sin refresh_token: hay que re-autorizar")
-        elif restante > 0:
-            linea(OK, "tokens de Strava", f"access_token vigente {int(restante / 60)} min mas")
-        else:
-            linea(OK, "tokens de Strava", "access_token vencido (se refresca solo en la corrida)")
+    marca, detalle = estado_tokens(
+        leer_json(config.TOKENS_PATH), config.STRAVA_REFRESH_TOKEN
+    )
+    linea(marca, "tokens de Strava", detalle)
 
     # -- plan ------------------------------------------------------------
     seccion("PLAN")

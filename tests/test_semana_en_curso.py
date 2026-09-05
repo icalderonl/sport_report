@@ -9,12 +9,14 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from sport_report import diagnostico
 from sport_report.config import Estimacion
 from sport_report.db.models import SesionReal
 from sport_report.db.repo import Repo
 from sport_report.engine import adherencia, foster, report
 from sport_report.fechas import semana_de
 from sport_report.plan.grammar import parse_plan
+from sport_report.plan import render
 from sport_report.plan.models import Ritmo, Sesion
 from sport_report.plan.store import PlanStore
 from sport_report.telegram import comandos
@@ -439,3 +441,68 @@ def test_comando_volumen_sin_datos_no_dibuja(tmp_path):
         assert not destino.exists()
     finally:
         repo.cerrar()
+
+
+# --------------------------------------------------------------------------
+# Diagnostico: estado de los tokens de Strava
+# --------------------------------------------------------------------------
+
+
+def test_diagnostico_reconoce_la_semilla_del_env():
+    """Sin tokens.json pero con STRAVA_REFRESH_TOKEN el sistema SI puede arrancar."""
+    marca, detalle = diagnostico.estado_tokens(None, refresh_env="a" * 40)
+    assert marca == diagnostico.AVISO  # no FALLA: no impide operar
+    assert "STRAVA_REFRESH_TOKEN" in detalle
+
+
+def test_diagnostico_falla_si_no_hay_ni_archivo_ni_semilla():
+    marca, detalle = diagnostico.estado_tokens(None, refresh_env="")
+    assert marca == diagnostico.FALLA
+    assert "autorizar" in detalle
+
+
+def test_diagnostico_falla_si_el_archivo_no_trae_refresh_token():
+    marca, detalle = diagnostico.estado_tokens({"access_token": "x", "expires_at": 0})
+    assert marca == diagnostico.FALLA
+    assert "re-autorizar" in detalle
+
+
+def test_diagnostico_con_access_token_vigente():
+    marca, detalle = diagnostico.estado_tokens(
+        {"refresh_token": "r", "expires_at": 6000}, ahora=0.0
+    )
+    assert marca == diagnostico.OK
+    assert "100 min" in detalle
+
+
+def test_diagnostico_con_access_token_vencido_no_es_falla():
+    """Vencido es normal: la corrida lo refresca sola."""
+    marca, detalle = diagnostico.estado_tokens(
+        {"refresh_token": "r", "expires_at": 10}, ahora=1000.0
+    )
+    assert marca == diagnostico.OK
+    assert "se refresca solo" in detalle
+
+
+# --------------------------------------------------------------------------
+# Render del plan
+# --------------------------------------------------------------------------
+
+
+def test_el_resumen_del_plan_no_repite_el_dia():
+    texto = render.resumen(parse_plan(PLAN_CON_TIEMPO))
+    assert "L  descanso" in texto
+    assert "L lunes" not in texto and "lunes" not in texto
+
+
+def test_el_resumen_declara_los_km_estimados():
+    texto = render.resumen(parse_plan(PLAN_CON_TIEMPO))
+    assert "Volumen planificado: 38.31 km  (5.71 estimados de sesiones por tiempo)" in texto
+
+
+def test_el_resumen_avisa_del_dia_que_no_se_pudo_estimar():
+    plan = parse_plan(PLAN_CON_TIEMPO.replace("V: easy 40min Z2", "V: tempo 40min Z4"))
+    texto = render.resumen(plan)
+    assert "viernes: prescrito en minutos y sin ritmo" in texto
+    assert "Volumen planificado: 32.6 km" in texto
+    assert "estimados de sesiones por tiempo" not in texto

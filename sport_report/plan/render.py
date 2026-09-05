@@ -31,6 +31,13 @@ def describir_sesion(s: Sesion) -> str:
 def avisos(plan: PlanSemanal) -> list[str]:
     """Advertencias no bloqueantes detectadas al cargar el plan."""
     out: list[str] = []
+    for d in plan.dias_sin_estimar():
+        s = plan.sesiones[d]
+        out.append(
+            f"{s.nombre_dia}: prescrito en minutos y sin ritmo con que estimar km. "
+            "Queda fuera del volumen planificado; agrega un ritmo (@5:30) si quieres "
+            "que cuente."
+        )
     for d in ORDEN_DIAS:
         s = plan.sesiones[d]
         if s.estructura is None or s.unidad != "km" or s.cantidad is None:
@@ -55,9 +62,17 @@ def resumen(plan: PlanSemanal, con_fuerza: bool = False) -> str:
             estado = "cumplida" if plan.fuerza_completada.get(d) else "pendiente"
             marca = "OK" if plan.fuerza_completada.get(d) else "..."
             texto = f"{texto}  [{marca} {estado}]"
-        lineas.append(f"{d} {s.nombre_dia:<10} {texto}")
+        lineas.append(f"{d}  {texto}")
     lineas.append("")
-    lineas.append(f"Volumen planificado: {plan.volumen_planificado_km():g} km")
+
+    total = plan.volumen_planificado_km()
+    estimado = plan.volumen_estimado_km()
+    linea_vol = f"Volumen planificado: {total:g} km"
+    if estimado:
+        # El total incluye km que no estan escritos en ninguna linea del plan:
+        # decirlo aca evita que el numero parezca salido de la nada.
+        linea_vol += f"  ({estimado:g} estimados de sesiones por tiempo)"
+    lineas.append(linea_vol)
 
     av = avisos(plan)
     if av:
