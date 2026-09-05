@@ -48,11 +48,6 @@ MARCAS = {
     "pendiente": " ",
 }
 
-# Bloque lleno U+2588. Telegram lo renderiza bien; en consola Windows hace falta
-# stdout en UTF-8 (run_weekly lo fuerza al arrancar).
-BARRA = "█"
-ANCHO_GRAFICO = 16
-
 MESES = (
     "enero", "febrero", "marzo", "abril", "mayo", "junio",
     "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
@@ -81,56 +76,6 @@ def _bloque_confiable(datos: dict, lineas: list[str]) -> None:
         lineas.append(f"  (no confiable: {datos['motivo']})")
 
 
-def _dia_mes(iso: str) -> str:
-    a, m, d = iso.split("-")
-    return f"{d}/{m}"
-
-
-def _lunes_iso(iso: str) -> str:
-    """Lunes de la semana que contiene esa fecha, en ISO."""
-    from datetime import date, timedelta
-
-    d = date.fromisoformat(iso)
-    return (d - timedelta(days=d.weekday())).isoformat()
-
-
-def grafico_volumen(historico: dict, ancho: int = ANCHO_GRAFICO) -> str:
-    """Barras de km por semana, escaladas a la semana de mayor volumen.
-
-    Sin dependencias y sin imagenes: el sistema entrega texto por Telegram y un
-    grafico de barras en caracteres se lee igual de bien en el telefono.
-    """
-    semanas = historico.get("semanas") or []
-    if not semanas:
-        return ""
-    maximo = max(s["km"] for s in semanas)
-    if maximo <= 0:
-        return ""
-
-    ultima_en_curso = bool(historico.get("ultima_en_curso"))
-    L = [f"VOLUMEN ULTIMAS {len(semanas)} SEMANAS (km)"]
-    for i, s in enumerate(semanas):
-        km = s["km"]
-        largo = int(round(km / maximo * ancho))
-        # Una semana con kilometros no puede dibujarse vacia: se confundiria
-        # con una de descanso total.
-        if km > 0 and largo == 0:
-            largo = 1
-        # Sin esta marca, la semana a medio correr parece un desplome de volumen.
-        cola = " (en curso)" if ultima_en_curso and i == len(semanas) - 1 else ""
-        L.append(
-            f"  {_dia_mes(s['lunes'])} {BARRA * largo}{' ' * (ancho - largo)} {km:g}{cola}"
-        )
-
-    # Se compara el LUNES de la primera fecha con datos, no la fecha suelta: si
-    # el historico empieza un martes, esa semana igual tiene datos y avisar
-    # sobraria.
-    desde = historico.get("primera_fecha_con_datos")
-    if desde and _lunes_iso(desde) > semanas[0]["lunes"]:
-        L.append(f"  (sin historico antes del {_dia_mes(desde)}: esas semanas van en cero)")
-    return "\n".join(L)
-
-
 def _linea_dia(d: dict) -> str:
     marca = MARCAS.get(d["estado"], "?")
     dia = NOMBRE_DIA.get(d["dia"], d["dia"])
@@ -156,9 +101,7 @@ def _linea_dia(d: dict) -> str:
     return f"[{marca}] {dia}  {tipo} {obj} -> {_num(d['real'], u)} ({_num(d['pct'], '%')})"
 
 
-def formatear_reporte(
-    datos: dict, narrativa: str | None = None, con_grafico: bool = True
-) -> str:
+def formatear_reporte(datos: dict, narrativa: str | None = None) -> str:
     """Arma el mensaje de Telegram a partir del JSON del motor de calculo.
 
     No calcula nada: todo lo que aparece aca sale del JSON.
@@ -238,11 +181,6 @@ def formatear_reporte(
         if fz["planificadas"]:
             L.append(f"FUERZA\n  {fz['cumplidas']}/{fz['planificadas']} cumplidas")
 
-    if con_grafico and datos.get("volumen_historico"):
-        g = grafico_volumen(datos["volumen_historico"])
-        if g:
-            L.append(g)
-
     if datos["alertas"]:
         L.append("\n".join(["ALERTAS"] + [f"  ! {x}" for x in datos["alertas"]]))
 
@@ -250,3 +188,90 @@ def formatear_reporte(
         L.append("\n".join(["SOBRE LOS DATOS"] + [f"  - {x}" for x in datos["avisos_datos"]]))
 
     return "\n\n".join(L)
+
+
+# --------------------------------------------------------------------------
+# Resumen ejecutivo de la semana en curso (/progreso)
+# --------------------------------------------------------------------------
+
+# Hubo actividad ese dia, se ajustara mas o menos al plan.
+_CON_ACTIVIDAD = ("cumplida", "bajo_plan", "sobre_plan", "dato_faltante", "fuerza_cumplida")
+# El dia paso y no hubo nada.
+_PERDIDOS = ("sin_sesion", "fuerza_pendiente")
+
+
+def _que_falta(d: dict) -> str:
+    """Una linea por sesion pendiente: que es y de que tamano."""
+    dia = NOMBRE_DIA.get(d["dia"], d["dia"])
+    if d["tipo_plan"] == "fuerza":
+        return f"  {dia}  fuerza"
+    u = d["unidad"] or ""
+    if d["objetivo"] is None:
+        return f"  {dia}  {d['tipo_plan']}"
+    return f"  {dia}  {d['tipo_plan']} {_num(d['objetivo'], u)}"
+
+
+def formatear_progreso(datos: dict) -> str:
+    """Resumen corto de como va la semana. No es el reporte semanal.
+
+    Responde dos preguntas y nada mas: cuantos km llevo de los programados y
+    que me queda por hacer. Las metricas de carga viven en el reporte del lunes.
+    """
+    s = datos["semana"]
+    vol = datos["volumen"]
+    adh = datos["adherencia"]
+
+    llevo = vol["real_km"] or 0.0
+    programado = vol.get("planificado_semana_km") or 0.0
+    L = [
+        f"SEMANA {_fecha_larga(s['inicio'])} al {_fecha_larga(s['fin'])}",
+        f"Al {_fecha_larga(s['hasta'])}",
+    ]
+
+    if not adh["dias"]:
+        return "\n".join(L + ["", f"{_num(llevo, ' km')} corridos.", "No hay plan cargado para esta semana."])
+
+    pct = round(llevo / programado * 100) if programado else None
+    linea = f"{_num(llevo, ' km')} de {_num(programado, ' km')} programados"
+    if pct is not None:
+        linea += f" ({pct}%)"
+    L.append("")
+    L.append(linea)
+
+    # Un descanso por venir no es algo "por hacer": no entra en la lista.
+    pendientes = [
+        d for d in adh["dias"] if d["estado"] == "pendiente" and d["tipo_plan"] != "rest"
+    ]
+    # Lo que falta se mide contra el plan, no contra la resta de totales: si ya
+    # te pasaste en una sesion, eso no descuenta de lo que queda por correr.
+    faltan_km = sum(
+        d["objetivo"] for d in pendientes if d["unidad"] == "km" and d["objetivo"]
+    )
+    entrenamientos = [d for d in adh["dias"] if d["tipo_plan"] != "rest"]
+    hechos = [d for d in entrenamientos if d["estado"] in _CON_ACTIVIDAD]
+    perdidos = [d for d in entrenamientos if d["estado"] in _PERDIDOS]
+
+    L.append(f"{len(hechos)} de {len(entrenamientos)} entrenamientos hechos")
+    if faltan_km:
+        L.append(f"Quedan {_num(round(faltan_km, 1), ' km')} en el plan.")
+    if perdidos:
+        dias = ", ".join(NOMBRE_DIA.get(d["dia"], d["dia"]) for d in perdidos)
+        L.append(f"Sin registrar: {dias}.")
+
+    if pendientes:
+        L.append("")
+        L.append("QUEDA ESTA SEMANA")
+        L.extend(_que_falta(d) for d in pendientes)
+    else:
+        L.append("")
+        L.append("La semana esta completa: no queda nada por hacer.")
+
+    fz = adh["fuerza"]
+    if fz["planificadas"] and fz["cumplidas"] < fz["planificadas"]:
+        L.append("")
+        L.append(
+            f"Fuerza: {fz['cumplidas']}/{fz['planificadas']} cumplidas "
+            "(marca con /fuerza <dia> si no quedo en Strava)."
+        )
+
+    return "\n".join(L)

@@ -47,8 +47,8 @@ sudo bash deploy/instalar.sh
 | `/setplan` | Carga el plan de la semana |
 | `/plan` | Plan vigente y estado de fuerza |
 | `/fuerza <dia>` | Marca una sesión de fuerza como cumplida |
-| `/progreso` | **Cómo va la semana en curso**, sin contar los días que faltan |
-| `/volumen` | Gráfico de km por semana de las últimas 16 |
+| `/progreso` | Resumen corto: km de los programados y qué entrenamientos quedan |
+| `/volumen` | Gráfico (PNG) de km por semana de las últimas 16 |
 | `/estado` | Qué semana reportaría el cron ahora |
 
 ### Por consola
@@ -95,9 +95,19 @@ se sigue comparando en su unidad nativa.
 **Un día que todavía no llega no es un incumplimiento.** `/progreso` corre el
 mismo motor con `hasta=hoy`: los días futuros quedan en estado `pendiente`, fuera
 del porcentaje de sesiones y fuera del volumen planificado, y las ventanas
-móviles de ACWR terminan hoy en vez de el domingo. Monotony sobre una semana
-incompleta se devuelve marcada como no confiable, porque no es comparable con la
-de una semana entera.
+móviles de ACWR terminan hoy en vez de el domingo. **Hoy también cuenta como
+pendiente mientras no haya nada registrado** — marcar la sesión del día como
+incumplida a las diez de la mañana sería falso. La respuesta de `/progreso` es
+deliberadamente corta: dos preguntas, cuánto llevo y qué me queda. Las métricas
+de carga se quedan en el reporte del lunes.
+
+**El gráfico de volumen es una imagen, no caracteres.** `sport_report/grafico.py`
+lo dibuja con matplotlib (backend `Agg`, la Pi no tiene entorno gráfico) y se
+manda como foto de Telegram, aparte del texto: el pie de foto son 1024
+caracteres y el reporte no cabe. La serie **no entra al prompt de Claude**:
+cualquier cosa que dijera sobre la tendencia sería una conclusión derivada, y la
+verificación posterior solo sabe comprobar números. Si matplotlib falta o falla,
+el reporte llega igual sin imagen y la corrida queda en `parcial`.
 
 **La carga no se mide en kilómetros.** Se usa un TRIMP por zona (minutos en zona
 × peso de zona) recorriendo el stream de HR, porque el plan mezcla sesiones
@@ -146,7 +156,7 @@ pip install -e ".[dev]"
 python -m pytest -q
 ```
 
-222 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
+225 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
 
 ```
 sport_report/
@@ -159,6 +169,7 @@ sport_report/
   engine/           ACWR, Foster, adherencia -> JSON único
   narrative/        llamada a Claude + verificación de cifras
   telegram/         bot, comandos, formateo, envío
+  grafico.py        grafico de volumen en PNG (matplotlib)
   run_weekly.py     orquestador (lo dispara el timer)
   diagnostico.py    chequeo de salud
 ```

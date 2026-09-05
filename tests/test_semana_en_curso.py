@@ -18,7 +18,8 @@ from sport_report.plan.grammar import parse_plan
 from sport_report.plan.models import Ritmo, Sesion
 from sport_report.plan.store import PlanStore
 from sport_report.telegram import comandos
-from sport_report.telegram.formato import formatear_reporte, grafico_volumen
+from sport_report.grafico import volumen_png
+from sport_report.telegram.formato import formatear_progreso, formatear_reporte
 
 SEMANA = semana_de(date(2026, 9, 7))  # lunes 7 a domingo 13
 LUNES, DOMINGO = SEMANA.inicio, SEMANA.fin
@@ -214,59 +215,53 @@ def test_volumen_semanal_ignora_sesiones_sin_distancia(tmp_path):
         repo.cerrar()
 
 
-def test_grafico_escala_a_la_semana_mayor():
-    hist = {
-        "semanas": [
-            {"lunes": "2026-08-31", "km": 40.0},
-            {"lunes": "2026-09-07", "km": 20.0},
-        ],
-        "primera_fecha_con_datos": "2026-08-31",
-    }
-    lineas = grafico_volumen(hist, ancho=10).splitlines()
-    assert lineas[0] == "VOLUMEN ULTIMAS 2 SEMANAS (km)"
-    assert lineas[1].count("█") == 10  # la mayor llena la barra
-    assert lineas[2].count("█") == 5  # la mitad, media barra
-    assert lineas[1].startswith("  31/08") and lineas[1].endswith("40")
+HIST = {
+    "semanas": [
+        {"lunes": "2026-08-31", "km": 40.0},
+        {"lunes": "2026-09-07", "km": 12.0},
+    ],
+    "primera_fecha_con_datos": "2026-08-31",
+    "ultima_en_curso": True,
+}
 
 
-def test_una_semana_con_pocos_km_no_se_dibuja_vacia():
-    """Un 0.5 km no puede parecer lo mismo que una semana sin correr."""
-    hist = {"semanas": [{"lunes": "2026-08-31", "km": 50.0}, {"lunes": "2026-09-07", "km": 0.5}]}
-    lineas = grafico_volumen(hist, ancho=10).splitlines()
-    assert lineas[2].count("█") == 1
+FIRMA_PNG = bytes.fromhex("89504e470d0a1a0a")
 
 
-def test_grafico_avisa_de_las_semanas_sin_historico():
-    hist = {
-        "semanas": [{"lunes": "2026-08-31", "km": 0.0}, {"lunes": "2026-09-07", "km": 30.0}],
-        "primera_fecha_con_datos": "2026-09-07",
-    }
-    assert "sin historico antes del 07/09" in grafico_volumen(hist)
+def test_genera_un_png_valido(tmp_path):
+    destino = tmp_path / "v.png"
+    assert volumen_png(HIST, destino) == destino
+    datos = destino.read_bytes()
+    assert datos.startswith(FIRMA_PNG)
+    assert len(datos) > 5000  # no es una imagen vacia
 
 
-def test_no_avisa_si_el_historico_solo_empieza_a_media_semana():
-    """Empezar el martes no deja esa semana sin datos: avisar seria mentir."""
-    hist = {
-        "semanas": [{"lunes": "2026-08-31", "km": 20.0}, {"lunes": "2026-09-07", "km": 30.0}],
-        "primera_fecha_con_datos": "2026-09-01",  # martes de la primera semana
-    }
-    assert "sin historico" not in grafico_volumen(hist)
+def test_no_deja_el_temporal_a_medias(tmp_path):
+    destino = tmp_path / "v.png"
+    volumen_png(HIST, destino)
+    assert list(tmp_path.glob("*.tmp.png")) == []
 
 
-def test_la_semana_en_curso_va_marcada_en_el_grafico():
-    """Una semana a medio correr parece un desplome si no se dice que va a medias."""
-    hist = {
-        "semanas": [{"lunes": "2026-08-31", "km": 40.0}, {"lunes": "2026-09-07", "km": 12.0}],
-        "ultima_en_curso": True,
-    }
-    lineas = grafico_volumen(hist).splitlines()
-    assert lineas[-1].endswith("(en curso)")
-    assert not lineas[-2].endswith("(en curso)")
+def test_redibujar_sobreescribe_la_misma_ruta(tmp_path):
+    destino = tmp_path / "v.png"
+    volumen_png(HIST, destino)
+    primero = destino.stat().st_size
+    volumen_png({**HIST, "semanas": [{"lunes": "2026-09-14", "km": 5.0}]}, destino)
+    assert destino.read_bytes().startswith(FIRMA_PNG)
+    assert destino.stat().st_size != primero  # se redibujo, no se apendizo
 
 
-def test_grafico_vacio_cuando_no_hay_kilometros():
-    assert grafico_volumen({"semanas": [{"lunes": "2026-09-07", "km": 0.0}]}) == ""
-    assert grafico_volumen({"semanas": []}) == ""
+def test_sin_kilometros_no_dibuja_nada(tmp_path):
+    destino = tmp_path / "v.png"
+    assert volumen_png({"semanas": [{"lunes": "2026-09-07", "km": 0.0}]}, destino) is None
+    assert volumen_png({"semanas": []}, destino) is None
+    assert not destino.exists()
+
+
+def test_crea_el_directorio_si_no_existe(tmp_path):
+    destino = tmp_path / "nueva" / "carpeta" / "v.png"
+    assert volumen_png(HIST, destino) == destino
+    assert destino.is_file()
 
 
 # --------------------------------------------------------------------------
@@ -324,20 +319,83 @@ def test_el_reporte_trae_la_serie_de_16_semanas(tmp_path):
         assert len(datos["volumen_historico"]["semanas"]) == 16
         # la serie redondea a un decimal: alimenta el grafico, no el calculo
         assert datos["volumen_historico"]["semanas"][-1]["km"] == 23.9
-        assert "VOLUMEN ULTIMAS 16 SEMANAS" in formatear_reporte(datos)
-        assert "VOLUMEN ULTIMAS" not in formatear_reporte(datos, con_grafico=False)
+        # el mensaje de texto NO dibuja: la imagen se manda aparte
+        assert "VOLUMEN ULTIMAS" not in formatear_reporte(datos)
     finally:
         repo.cerrar()
 
 
-def test_progreso_sin_strava_responde_igual(tmp_path):
-    """Si no hay red el comando no puede quedarse mudo: avisa y usa la base."""
+def test_progreso_es_un_resumen_corto_no_el_reporte(tmp_path):
+    """Responde dos preguntas: cuanto llevo y que me queda. Nada mas."""
     repo = _repo_con_semana(tmp_path)
     try:
         texto = comandos.cmd_progreso(
             _store(tmp_path), repo=repo, hoy=LUNES + timedelta(days=5), sincronizar=False
         )
-        assert texto.startswith("AVANCE DE LA SEMANA")
+        # lo que si tiene
+        assert "23.9 km de 38.3 km programados (62%)" in texto
+        assert "QUEDA ESTA SEMANA" in texto
+        assert "dom  long 16km" in texto
+        assert "Quedan 16 km en el plan." in texto
+        assert "sab  rest" not in texto  # un descanso no es algo por hacer
+        # lo que no: las metricas de carga se quedan en el reporte del lunes
+        for seccion in ("ACWR", "Monotony", "DERIVA CARDIACA", "CADENCIA", "VOLUMEN"):
+            assert seccion not in texto
+        assert len(texto.splitlines()) < 15
+    finally:
+        repo.cerrar()
+
+
+def test_progreso_no_da_por_perdido_el_dia_de_hoy(tmp_path):
+    """A media manana del viernes, la sesion del viernes aun puede hacerse."""
+    repo = Repo(tmp_path / "t.db")
+    try:
+        repo.guardar_sesion(sesion(1, distancia_km=8.0))  # solo el martes
+        viernes = LUNES + timedelta(days=4)
+        texto = comandos.cmd_progreso(
+            _store(tmp_path), repo=repo, hoy=viernes, sincronizar=False
+        )
+        assert "vie  easy 40min" in texto  # aparece en lo que queda
+        assert "Sin registrar: vie" not in texto  # y no como incumplido
+    finally:
+        repo.cerrar()
+
+
+def test_progreso_marca_los_dias_que_si_se_perdieron(tmp_path):
+    repo = Repo(tmp_path / "t.db")
+    try:
+        viernes = LUNES + timedelta(days=4)
+        texto = comandos.cmd_progreso(
+            _store(tmp_path), repo=repo, hoy=viernes, sincronizar=False
+        )
+        # el miercoles de fuerza tambien cuenta como perdido
+        assert "Sin registrar: mar, mie, jue" in texto
+        assert "0 de 5 entrenamientos hechos" in texto
+    finally:
+        repo.cerrar()
+
+
+def test_progreso_con_la_semana_terminada(tmp_path):
+    repo = _repo_con_semana(tmp_path)
+    try:
+        texto = comandos.cmd_progreso(
+            _store(tmp_path), repo=repo, hoy=DOMINGO, sincronizar=False
+        )
+        assert "no queda nada por hacer" in texto
+        assert "QUEDA ESTA SEMANA" not in texto
+    finally:
+        repo.cerrar()
+
+
+def test_progreso_sin_plan_no_revienta(tmp_path):
+    repo = _repo_con_semana(tmp_path)
+    try:
+        vacio = PlanStore(tmp_path / "sin_plan.json")
+        texto = comandos.cmd_progreso(
+            vacio, repo=repo, hoy=LUNES + timedelta(days=5), sincronizar=False
+        )
+        assert "No hay plan cargado" in texto
+        assert "23.9 km" in texto  # lo real se reporta igual
     finally:
         repo.cerrar()
 
@@ -354,22 +412,30 @@ def test_progreso_avisa_si_la_ingesta_falla(tmp_path):
         )
         assert "no se pudo sincronizar con Strava" in texto
         assert "429 cuota agotada" in texto
-        assert "AVANCE DE LA SEMANA" in texto  # el reporte llega igual
+        assert "23.9 km de 38.3 km" in texto  # el resumen llega igual
     finally:
         repo.cerrar()
 
 
-def test_comando_volumen(tmp_path):
+def test_comando_volumen_devuelve_imagen_y_pie(tmp_path):
     repo = _repo_con_semana(tmp_path)
+    destino = tmp_path / "v.png"
     try:
-        assert "VOLUMEN ULTIMAS 16 SEMANAS" in comandos.cmd_volumen(repo=repo, hoy=DOMINGO)
+        ruta, texto = comandos.cmd_volumen(repo=repo, hoy=DOMINGO, destino=destino)
+        assert ruta == destino
+        assert destino.read_bytes().startswith(FIRMA_PNG)
+        assert "ultimas 16 semanas" in texto
     finally:
         repo.cerrar()
 
 
-def test_comando_volumen_sin_datos(tmp_path):
+def test_comando_volumen_sin_datos_no_dibuja(tmp_path):
     repo = Repo(tmp_path / "vacia.db")
+    destino = tmp_path / "v.png"
     try:
-        assert "Todavia no hay kilometros" in comandos.cmd_volumen(repo=repo, hoy=DOMINGO)
+        ruta, texto = comandos.cmd_volumen(repo=repo, hoy=DOMINGO, destino=destino)
+        assert ruta is None
+        assert "Todavia no hay kilometros" in texto
+        assert not destino.exists()
     finally:
         repo.cerrar()

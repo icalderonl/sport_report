@@ -157,6 +157,8 @@ def construir(
             "real_km": r_adh.volumen_real_km,
             "pct": r_adh.volumen_pct,
             "estimado_km": r_adh.volumen_estimado_km,
+            # Total de los 7 dias, no solo los transcurridos.
+            "planificado_semana_km": r_adh.volumen_planificado_semana_km,
         },
         "volumen_historico": {
             "semanas": [{"lunes": d.isoformat(), "km": v} for d, v in serie],

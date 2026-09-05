@@ -116,7 +116,14 @@ sudo bash /opt/sport_report/deploy/instalar.sh
 sudo systemctl restart sport-report-bot
 ```
 
-`instalar.sh` no pisa el `.env` existente ni `data/`.
+`instalar.sh` no pisa el `.env` existente ni `data/`. Se puede saltar cuando solo
+cambio codigo Python (la instalacion es `pip install -e .`, el venv apunta al
+fuente y basta el `restart`); hay que correrlo cuando cambian las dependencias.
+
+**matplotlib** es la unica dependencia pesada: ~80 MB con numpy. En Raspberry Pi
+OS de 64 bits hay wheels para aarch64, asi que `pip` no compila nada. Si aun asi
+fallara, el sistema sigue funcionando: el reporte llega sin la imagen y la
+corrida queda en `parcial`.
 
 ---
 

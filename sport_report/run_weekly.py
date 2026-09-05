@@ -30,7 +30,7 @@ from .strava.client import StravaClient
 from .strava.errors import StravaError
 from .strava.ingest import Ingesta
 from .telegram.formato import formatear_reporte
-from .telegram.sender import enviar
+from .telegram.sender import enviar, enviar_foto
 
 log = logging.getLogger(__name__)
 
@@ -67,6 +67,9 @@ def ejecutar(
     ingesta: Ingesta | None = None,
     narrador: Callable[[dict], Any] | None = redactar,
     enviador: Callable[[str], bool] | None = enviar,
+    # Sin destino no se dibuja nada: evita que un test o una llamada de
+    # biblioteca arranque matplotlib y escriba PNGs sin haberlo pedido.
+    enviador_foto: Callable[..., bool] | None = None,
     guardar: bool = True,
 ) -> Resultado:
     """Corre el pipeline completo. No lanza salvo un fallo del motor de calculo."""
@@ -107,13 +110,32 @@ def ejecutar(
     if guardar:
         _guardar_reporte(rango, datos)
 
-    # 4. Formateo y envio --------------------------------------------------
+    # 4. Grafico de volumen ------------------------------------------------
+    # Es un extra: matplotlib puede faltar o fallar, y eso no puede impedir que
+    # el reporte llegue. Degrada la corrida a parcial, nada mas.
+    ruta_grafico = None
+    if enviador_foto is not None:
+        try:
+            from .grafico import volumen_png
+
+            ruta_grafico = volumen_png(datos["volumen_historico"])
+        except Exception as exc:
+            log.warning("sin grafico de volumen: %s", exc)
+            problemas.append(f"grafico de volumen no disponible ({exc})")
+
+    # 5. Formateo y envio --------------------------------------------------
     mensaje = formatear_reporte(datos, texto_narrativa)
     enviado = True
     if enviador is not None:
         enviado = bool(enviador(mensaje))
         if not enviado:
             problemas.append("fallo el envio por Telegram")
+
+    # La imagen va aparte del texto: el pie de foto de Telegram son 1024
+    # caracteres y el reporte no cabe.
+    if enviado and ruta_grafico is not None and enviador_foto is not None:
+        if not enviador_foto(ruta_grafico, "Volumen semanal"):
+            problemas.append("no se pudo enviar el grafico de volumen")
 
     if not enviado:
         estado = ERROR
@@ -150,10 +172,16 @@ def _args(argv: list[str] | None):
     return p.parse_args(argv)
 
 
+def _mostrar_foto(ruta, caption: str = "") -> bool:
+    """En --dry-run el grafico se genera igual, pero se dice donde quedo."""
+    print(f"\n[grafico de volumen] {ruta}")
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     setup("run_weekly")
-    # El grafico de volumen usa bloques Unicode; sin esto --dry-run revienta en
-    # una consola Windows con cp1252.
+    # El plan del atleta puede traer acentos; sin esto --dry-run revienta en una
+    # consola Windows con cp1252.
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):  # stdout redirigido o ya fijado
@@ -177,6 +205,7 @@ def main(argv: list[str] | None = None) -> int:
             ingesta=ingesta,
             narrador=None if a.sin_narrativa else redactar,
             enviador=None if a.dry_run else enviar,
+            enviador_foto=_mostrar_foto if a.dry_run else enviar_foto,
         )
     except Exception as exc:  # el motor de calculo o algo imprevisto
         log.exception("la corrida fallo")

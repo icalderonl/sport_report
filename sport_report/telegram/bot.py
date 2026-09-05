@@ -87,9 +87,22 @@ def on_progreso(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
     return comandos.cmd_progreso(_store)
 
 
-@_handler
-def on_volumen(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
-    return comandos.cmd_volumen()
+async def on_volumen(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Unico comando que responde con imagen, por eso no usa `_handler`."""
+    if not _autorizado(update):
+        return
+    try:
+        ruta, texto = comandos.cmd_volumen()
+    except Exception:
+        log.exception("error generando el grafico de volumen")
+        await _responder(update, "Error interno generando el grafico. Revisa logs/bot.log.")
+        return
+
+    if ruta is None:
+        await _responder(update, texto)
+        return
+    with open(ruta, "rb") as f:
+        await update.effective_message.reply_photo(photo=f, caption=texto)
 
 
 @_handler

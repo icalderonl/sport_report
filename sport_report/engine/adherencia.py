@@ -84,6 +84,8 @@ class ResumenAdherencia:
     volumen_real_km: float
     volumen_pct: float | None
     volumen_estimado_km: float = 0.0
+    # Total de los 7 dias, para el resumen de la semana en curso.
+    volumen_planificado_semana_km: float = 0.0
     dias_transcurridos: int = 7
     sesiones_evaluables: int = 0
     sesiones_cumplidas: int = 0
@@ -110,6 +112,7 @@ class ResumenAdherencia:
             "volumen_real_km": self.volumen_real_km,
             "volumen_pct": self.volumen_pct,
             "volumen_estimado_km": self.volumen_estimado_km,
+            "volumen_planificado_semana_km": self.volumen_planificado_semana_km,
             "dias_transcurridos": self.dias_transcurridos,
             "en_curso": self.en_curso,
             "sesiones_evaluables": self.sesiones_evaluables,
@@ -293,7 +296,18 @@ def calcular(
     transcurridos: list[str] = []
     for i, letra in enumerate(ORDEN_DIAS):
         fecha = rango.inicio + timedelta(days=i)
-        if hasta is not None and fecha > hasta:
+        reales_dia = por_fecha.get(fecha, [])
+        # Un dia futuro esta pendiente. HOY tambien, mientras no haya nada
+        # registrado: el dia no ha terminado y marcarlo como incumplido a las
+        # diez de la manana seria falso.
+        futuro = hasta is not None and fecha > hasta
+        hoy_sin_nada = (
+            hasta is not None
+            and fecha == hasta
+            and not reales_dia
+            and not plan.sesiones[letra].es_descanso
+        )
+        if futuro or hoy_sin_nada:
             dias.append(_dia_pendiente(plan.sesiones[letra], fecha))
             continue
         transcurridos.append(letra)
@@ -301,7 +315,7 @@ def calcular(
             _evaluar_dia(
                 plan.sesiones[letra],
                 fecha,
-                por_fecha.get(fecha, []),
+                reales_dia,
                 plan.fuerza_completada.get(letra, False),
                 umbrales,
             )
@@ -315,6 +329,7 @@ def calcular(
     # corrido hasta hoy contra el total de la semana daria siempre "bajo plan".
     planificado = plan.volumen_planificado_km(transcurridos)
     estimado = plan.volumen_estimado_km(transcurridos)
+    planificado_semana = plan.volumen_planificado_km()
 
     # Que parte del planificado es estimada no va como aviso: se muestra en la
     # propia linea de volumen, pegada a la cifra, y repetirlo abajo es ruido.
@@ -334,6 +349,7 @@ def calcular(
         volumen_real_km=volumen_real,
         volumen_pct=round(volumen_real / planificado * 100, 1) if planificado else None,
         volumen_estimado_km=estimado,
+        volumen_planificado_semana_km=planificado_semana,
         dias_transcurridos=len(transcurridos),
         sesiones_evaluables=len(evaluables),
         sesiones_cumplidas=len(cumplidas),
