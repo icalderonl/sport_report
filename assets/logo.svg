@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Reporte semanal de running">
+  <defs>
+    <linearGradient id="fondo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#16233A"/>
+      <stop offset="1" stop-color="#0A1120"/>
+    </linearGradient>
+    <clipPath id="marco">
+      <rect x="0" y="0" width="512" height="512" rx="115" ry="115"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#marco)">
+    <rect x="0" y="0" width="512" height="512" fill="url(#fondo)"/>
+
+    <!-- linea de tendencia: la carga semanal sobre la que corre -->
+    <g fill="none" stroke="#38BDF8" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="96,432 198,406 300,418 416,360"/>
+    </g>
+    <circle cx="416" cy="360" r="20" fill="#38BDF8"/>
+
+    <!-- corredor en zancada -->
+    <g stroke="#FBBF24" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="310" cy="148" r="37" fill="#FBBF24" stroke="none"/>
+      <path d="M278 194 L236 282" stroke-width="36"/>
+      <path d="M278 194 L340 230 L358 182" stroke-width="26"/>
+      <path d="M278 194 L214 222 L198 274" stroke-width="26"/>
+      <path d="M236 282 L330 296 L294 358" stroke-width="32"/>
+      <path d="M236 282 L190 358 L132 384" stroke-width="32"/>
+    </g>
+  </g>
+</svg>
