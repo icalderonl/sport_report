@@ -506,3 +506,17 @@ def test_el_resumen_avisa_del_dia_que_no_se_pudo_estimar():
     assert "viernes: prescrito en minutos y sin ritmo" in texto
     assert "Volumen planificado: 32.6 km" in texto
     assert "estimados de sesiones por tiempo" not in texto
+
+
+def test_la_ultima_zona_sin_tope_no_se_imprime_como_menos_uno():
+    """Strava manda max=-1 para 'sin tope'; en crudo parecia un dato corrupto."""
+    zonas = [
+        {"min": 0, "max": 118},
+        {"min": 118, "max": 147},
+        {"min": 147, "max": 161},
+        {"min": 161, "max": 176},
+        {"min": 176, "max": -1},
+    ]
+    texto = diagnostico.describir_zonas(zonas)
+    assert texto == "Z1<=118 Z2<=147 Z3<=161 Z4<=176 Z5>176"
+    assert "-1" not in texto

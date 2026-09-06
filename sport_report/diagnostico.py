@@ -39,6 +39,23 @@ def _secreto(nombre: str, valor: str, obligatorio: bool = True) -> None:
         linea(FALLA if obligatorio else AVISO, nombre, "sin configurar")
 
 
+def describir_zonas(zonas: list[dict[str, int]]) -> str:
+    """Zonas de HR legibles.
+
+    Strava manda `max = -1` en la ultima zona para decir "sin tope". Imprimirlo
+    en crudo daba `Z5<=-1`, que parece un dato corrupto. El calculo ya lo trata
+    bien (ver `metricas.indice_zona`); esto es solo como se muestra.
+    """
+    partes = []
+    for i, z in enumerate(zonas):
+        tope = z.get("max", -1)
+        if tope is None or tope <= 0:
+            partes.append(f"Z{i + 1}>{z.get('min', 0)}")
+        else:
+            partes.append(f"Z{i + 1}<={tope}")
+    return " ".join(partes)
+
+
 def estado_tokens(
     tokens: dict | None, refresh_env: str = "", ahora: float | None = None
 ) -> tuple[str, str]:
@@ -159,7 +176,7 @@ def main() -> int:
                 )
             zonas, origen = repo.zonas()
             if zonas:
-                linea(OK, "zonas de HR", " ".join(f"Z{i+1}<={z['max']}" for i, z in enumerate(zonas)))
+                linea(OK, "zonas de HR", describir_zonas(zonas))
             elif origen is None:
                 linea(AVISO, "zonas de HR", "aun no se consultaron a Strava")
             else:

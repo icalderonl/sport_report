@@ -174,7 +174,7 @@ pip install -e ".[dev]"
 python -m pytest -q
 ```
 
-233 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
+234 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
 
 ```
 sport_report/
