@@ -19,6 +19,15 @@ class ErrorPlan:
         return f"{ubic}: {self.mensaje}"
 
 
+class PlanCorrupto(ValueError):
+    """El plan guardado en disco no se puede leer.
+
+    Distinto de `PlanInvalido`, que es un plan mal escrito por el usuario al
+    cargarlo: esto es un archivo editado a mano, truncado, o escrito por una
+    version del formato que este codigo no entiende.
+    """
+
+
 class PlanInvalido(Exception):
     """El plan completo se rechaza. Nunca se acepta parcialmente."""
 

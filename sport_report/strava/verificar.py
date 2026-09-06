@@ -19,7 +19,17 @@ from .errors import StravaError
 def main(argv: list[str] | None = None) -> int:
     setup("verificar")
     argv = argv if argv is not None else sys.argv[1:]
-    dias = int(argv[0]) if argv else 7
+    try:
+        dias = int(argv[0]) if argv else 7
+        if dias < 1:
+            raise ValueError
+    except ValueError:
+        print(
+            f"'{argv[0]}' no es un numero de dias valido. Uso: "
+            "python -m sport_report.strava.verificar [dias]",
+            file=sys.stderr,
+        )
+        return 2
 
     cli = StravaClient()
     try:

@@ -9,7 +9,8 @@ import unicodedata
 from datetime import date, timedelta
 from typing import Any
 
-from ..fechas import semana_a_reportar
+from .. import fechas
+from ..fechas import RangoSemana, semana_a_reportar
 from ..plan.errors import PlanInvalido
 from ..plan.grammar import parse_plan
 from ..plan.models import DIAS, ORDEN_DIAS
@@ -37,6 +38,8 @@ AYUDA = """Comandos:
 /plan — muestra el plan cargado y el estado de las sesiones de fuerza.
 /fuerza <dia> — marca una fuerza como cumplida (L M W J V S D o el nombre).
   Solo hace falta si la sesion no quedo registrada en Strava.
+  Se aplica a la semana en curso; agrega `anterior` o `proxima` para otra
+  (`/fuerza D anterior` el lunes, para el domingo que acaba de pasar).
 /progreso — resumen corto de la semana en curso: cuantos km llevas de los
   programados y que entrenamientos te quedan. Sincroniza con Strava primero.
 /volumen — grafico de los kilometros por semana de las ultimas 16 semanas.
@@ -115,18 +118,44 @@ def cmd_plan(store: PlanStore) -> str:
     return f"{cabecera}\n\n{resumen(anclado.plan, con_fuerza=True)}"
 
 
-def cmd_fuerza(store: PlanStore, arg: str) -> str:
+_SUFIJO_PROXIMA = ("proxima", "siguiente", "next")
+_SUFIJO_ANTERIOR = ("anterior", "pasada", "previa")
+
+
+def partir_fuerza(arg: str, hoy: date) -> tuple[str, RangoSemana]:
+    """Separa `/fuerza <dia> [anterior|proxima]` en (dia, semana destino).
+
+    Por defecto la semana en curso, NO el plan vigente: si el domingo se cargo
+    el plan de la semana siguiente con `/setplan proxima`, el vigente ya es
+    otro y marcar sobre el ponia la fuerza en una semana que aun no empieza.
+    """
+    tokens = arg.split()
+    destino = fechas.semana_de(hoy)
+    if len(tokens) >= 2:
+        cola = _sin_tildes(tokens[-1].lower())
+        if cola in _SUFIJO_PROXIMA:
+            return " ".join(tokens[:-1]), fechas.semana_siguiente(destino)
+        if cola in _SUFIJO_ANTERIOR:
+            return " ".join(tokens[:-1]), fechas.semana_anterior(destino)
+    return arg, destino
+
+
+def cmd_fuerza(store: PlanStore, arg: str, hoy: date | None = None) -> str:
+    dia_texto, rango = partir_fuerza(arg, hoy or fechas.hoy_local())
     try:
-        dia = parse_dia(arg)
+        dia = parse_dia(dia_texto)
     except ValueError as exc:
         return _cap(str(exc))
     try:
-        anclado = store.marcar_fuerza(dia)
+        anclado = store.marcar_fuerza(dia, True, rango)
     except FileNotFoundError:
-        return "No hay plan cargado. Usa /setplan."
+        return f"No hay plan guardado para la semana {rango}. Usa /setplan."
     except DiaSinFuerza as exc:
         return _cap(str(exc))
-    return f"Fuerza del {DIAS[dia]} marcada como cumplida.\n\n{resumen(anclado.plan, con_fuerza=True)}"
+    return (
+        f"Fuerza del {DIAS[dia]} ({anclado.rango}) marcada como cumplida.\n\n"
+        f"{resumen(anclado.plan, con_fuerza=True)}"
+    )
 
 
 def cmd_progreso(
@@ -220,8 +249,10 @@ def cmd_volumen(
     historico = {
         "semanas": [{"lunes": d.isoformat(), "km": v} for d, v in serie],
         "primera_fecha_con_datos": primera.isoformat() if primera else None,
-        # La ultima barra va marcada si esa semana todavia no termina.
-        "ultima_en_curso": bool(serie) and dia < serie[-1][0] + timedelta(days=6),
+        # La ultima barra va marcada si esa semana todavia no termina. `<=`,
+        # no `<`: el domingo la semana sigue en curso (misma regla que
+        # `report.construir`), y con `<` la barra se pintaba como cerrada.
+        "ultima_en_curso": bool(serie) and dia <= serie[-1][0] + timedelta(days=6),
     }
     if not any(s["km"] for s in historico["semanas"]):
         return None, (

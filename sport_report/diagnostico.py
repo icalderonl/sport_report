@@ -130,7 +130,17 @@ def main() -> int:
     seccion("PLAN")
     store = PlanStore()
     vigente = store.cargar()
-    if vigente is None:
+    if vigente is None and config.PLAN_ACTUAL_PATH.exists():
+        # `cargar()` devuelve None tanto si no hay plan como si el archivo esta
+        # corrupto. Que el archivo exista y aun asi no se pueda leer es una
+        # falla, no un "todavia no cargaste nada".
+        linea(
+            FALLA,
+            "plan vigente",
+            f"{config.PLAN_ACTUAL_PATH.name} existe pero no se pudo leer; "
+            "el motivo esta en los logs. Vuelve a cargarlo con /setplan",
+        )
+    elif vigente is None:
         linea(AVISO, "plan vigente", "no hay plan cargado; usa /setplan en Telegram")
     else:
         p = vigente.plan
@@ -191,7 +201,14 @@ def main() -> int:
                 linea(AVISO, "corridas", "ninguna registrada todavia")
             else:
                 for c in corridas:
-                    marca = {"ok": OK, "parcial": AVISO}.get(c["estado"], FALLA)
+                    marca = {
+                        "ok": OK,
+                        "parcial": AVISO,
+                        "en_curso": AVISO,
+                        # El proceso murio sin cerrarla; no es un fallo del
+                        # calculo pero conviene verlo.
+                        "interrumpida": AVISO,
+                    }.get(c["estado"], FALLA)
                     linea(marca, f"corrida {c['inicio_utc']}", f"{c['estado']} {c['detalle'] or ''}")
         finally:
             repo.cerrar()

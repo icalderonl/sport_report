@@ -25,10 +25,30 @@ DIAS_POR_DEFECTO = 35
 PAUSA_S = 1.5
 
 
+def _dias(argv: list[str]) -> int:
+    """Valida el argumento. Un traceback no le sirve a nadie a las 7 de la mañana."""
+    if not argv:
+        return DIAS_POR_DEFECTO
+    try:
+        dias = int(argv[0])
+    except ValueError:
+        raise ValueError(
+            f"'{argv[0]}' no es un numero de dias. Uso: "
+            "python -m sport_report.strava.backfill [dias]"
+        ) from None
+    if dias < 1:
+        raise ValueError(f"los dias a recuperar deben ser 1 o mas, se recibio {dias}")
+    return dias
+
+
 def main(argv: list[str] | None = None) -> int:
     log = setup("backfill")
     argv = argv if argv is not None else sys.argv[1:]
-    dias = int(argv[0]) if argv else DIAS_POR_DEFECTO
+    try:
+        dias = _dias(argv)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
 
     hasta = hoy_local()
     desde = hasta - timedelta(days=dias)
@@ -45,6 +65,12 @@ def main(argv: list[str] | None = None) -> int:
         log.error("backfill fallido: %s", exc)
         print(f"\nERROR: {exc}", file=sys.stderr)
         return 1
+    except BaseException as exc:
+        # Cualquier otra cosa (Ctrl-C incluido) tambien tiene que cerrar la
+        # fila: si no, queda `en_curso` para siempre y el diagnostico no la
+        # distingue de un error real.
+        repo.cerrar_corrida(corrida, "error", f"{type(exc).__name__}: {exc}")
+        raise
     finally:
         cliente.cerrar()
 

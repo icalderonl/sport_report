@@ -294,9 +294,30 @@ def sesion_desde_json(d: dict[str, Any]) -> Sesion:
 
 
 def plan_desde_json(d: dict[str, Any]) -> PlanSemanal:
+    """Contraparte de `to_json`. Lanza `PlanCorrupto` si el archivo no sirve.
+
+    La gramatica es estricta al entrar (rechaza el plan entero si falta un
+    dia); esto es la misma exigencia al salir. Sin la validacion, un archivo
+    editado a mano producia un `KeyError` crudo dentro del cron, en vez de un
+    motivo legible.
+    """
+    from .errors import PlanCorrupto
+
+    try:
+        sesiones = {k: sesion_desde_json(v) for k, v in d["sesiones"].items()}
+        semana = int(d["semana"])
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise PlanCorrupto(f"plan ilegible: {exc}") from exc
+
+    faltantes = [x for x in ORDEN_DIAS if x not in sesiones]
+    if faltantes:
+        raise PlanCorrupto(
+            f"al plan guardado le faltan los dias {', '.join(faltantes)}; "
+            "los 7 son obligatorios"
+        )
     return PlanSemanal(
-        semana=int(d["semana"]),
-        sesiones={k: sesion_desde_json(v) for k, v in d["sesiones"].items()},
+        semana=semana,
+        sesiones=sesiones,
         crudo=d.get("crudo", ""),
         fuerza_completada=dict(d.get("fuerza_completada", {})),
     )

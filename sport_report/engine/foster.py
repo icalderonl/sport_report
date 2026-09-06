@@ -58,6 +58,19 @@ def calcular(
     con el de una semana completa —la media y la desviacion se toman sobre menos
     valores— asi que se devuelve marcado como no confiable.
     """
+    if dias <= 0:
+        # La semana todavia no empieza (se pidio el avance de una semana
+        # futura). No hay ventana que promediar: `fmean([])` lanzaria.
+        return ResultadoFoster(
+            carga_semanal=0.0,
+            media_diaria=0.0,
+            desviacion=0.0,
+            monotony=None,
+            strain=None,
+            confiable=False,
+            motivo="la semana todavia no empieza",
+        )
+
     diarias = [
         float(carga_por_dia.get(inicio + timedelta(days=i), 0.0)) for i in range(dias)
     ]

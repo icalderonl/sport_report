@@ -8,6 +8,7 @@ que recien empieza si el usuario lo cargo el domingo por la noche.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
@@ -16,7 +17,10 @@ from typing import Any
 from .. import config
 from ..fechas import RangoSemana, ahora_local, semana_actual, semana_de, semana_siguiente
 from ..storage import escribir_json, leer_json, lock
+from .errors import PlanCorrupto
 from .models import ORDEN_DIAS, PlanSemanal, plan_desde_json
+
+log = logging.getLogger(__name__)
 
 VERSION_FORMATO = 1
 
@@ -39,9 +43,21 @@ class PlanAnclado:
 
     @staticmethod
     def from_json(d: dict[str, Any]) -> "PlanAnclado":
+        version = d.get("version", 1)
+        # Se escribe desde el principio pero antes no se leia: un archivo de un
+        # formato futuro se interpretaba a la fuerza con las reglas viejas.
+        if not isinstance(version, int) or version > VERSION_FORMATO:
+            raise PlanCorrupto(
+                f"plan escrito con el formato v{version}; esta version entiende "
+                f"hasta la v{VERSION_FORMATO}"
+            )
+        try:
+            inicio = date.fromisoformat(d["rango"]["inicio"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise PlanCorrupto(f"el plan guardado no trae un rango valido: {exc}") from exc
         return PlanAnclado(
-            plan=plan_desde_json(d["plan"]),
-            rango=semana_de(date.fromisoformat(d["rango"]["inicio"])),
+            plan=plan_desde_json(d["plan"] if "plan" in d else {}),
+            rango=semana_de(inicio),
             cargado_en=d.get("cargado_en", ""),
         )
 
@@ -57,17 +73,35 @@ class PlanStore:
 
     # -- lectura ---------------------------------------------------------
 
+    def _leer(self, ruta: Path) -> PlanAnclado | None:
+        """Lee un plan de disco. Un archivo ilegible se trata como 'no hay plan'.
+
+        Es deliberado que no propague: el reporte del lunes tiene que llegar
+        igual (spec 10), diciendo que no habia plan, en vez de morirse con un
+        KeyError. El motivo real queda en el log.
+        """
+        try:
+            d = leer_json(ruta)
+        except (OSError, ValueError) as exc:  # JSON truncado o ilegible
+            log.error("no se pudo leer %s: %s", ruta, exc)
+            return None
+        if not d:
+            return None
+        try:
+            return PlanAnclado.from_json(d)
+        except PlanCorrupto as exc:
+            log.error("%s esta corrupto y se ignora: %s", ruta, exc)
+            return None
+
     def cargar(self) -> PlanAnclado | None:
-        d = leer_json(self.actual)
-        return PlanAnclado.from_json(d) if d else None
+        return self._leer(self.actual)
 
     def para_semana(self, rango: RangoSemana) -> PlanAnclado | None:
         """Plan que aplica a una semana dada. Busca en el actual y en el archivo."""
         vigente = self.cargar()
         if vigente and vigente.rango.inicio == rango.inicio:
             return vigente
-        d = leer_json(self.archivo / f"{rango.clave}.json")
-        return PlanAnclado.from_json(d) if d else None
+        return self._leer(self.archivo / f"{rango.clave}.json")
 
     # -- escritura -------------------------------------------------------
 
@@ -106,9 +140,8 @@ class PlanStore:
             if rango is None or (vigente and vigente.rango.inicio == rango.inicio):
                 anclado, destino = vigente, self.actual
             else:
-                d = leer_json(self.archivo / f"{rango.clave}.json")
-                anclado = PlanAnclado.from_json(d) if d else None
                 destino = self.archivo / f"{rango.clave}.json"
+                anclado = self._leer(destino)
 
             if anclado is None:
                 raise FileNotFoundError(

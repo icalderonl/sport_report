@@ -57,7 +57,9 @@ def _cadencia(actual: list[SesionReal], previa: list[SesionReal]) -> Tendencia:
 
 def _decoupling(sesiones: list[SesionReal], umbrales: Umbrales) -> dict[str, Any]:
     valores = [s.decoupling_pct for s in sesiones if s.decoupling_pct is not None]
-    sin_dato = sum(1 for s in sesiones if not s.es_fuerza and s.decoupling_pct is None)
+    # Solo las corridas pueden tener deriva: contar una salida en bici como
+    # "sesion sin dato" inventaba un hueco que no existe.
+    sin_dato = sum(1 for s in sesiones if s.es_run and s.decoupling_pct is None)
     promedio = _promedio(valores)
     maximo = round(max(valores), 2) if valores else None
     alerta = ""
@@ -96,7 +98,9 @@ def construir(
     # del domingo aparecia como no registrada en vez de como pendiente.
     corte = hasta if hasta is not None and hasta <= rango.fin else None
     fin_ventana = corte or rango.fin
-    dias_semana = ((corte - rango.inicio).days + 1) if corte else 7
+    # `max(0, ...)`: con un `hasta` anterior al lunes no ha transcurrido ningun
+    # dia. Sin el clamp salia negativo y Monotony reventaba con fmean([]).
+    dias_semana = max(0, (corte - rango.inicio).days + 1) if corte else 7
 
     sesiones = repo.sesiones_entre(rango.inicio, fin_ventana)
     previa = semana_anterior(rango)
@@ -105,7 +109,8 @@ def construir(
     # Ventana de 28 dias terminando el ultimo dia considerado.
     ini_cronica = fin_ventana - timedelta(days=m_acwr.DIAS_CRONICA - 1)
     carga_por_dia = repo.carga_diaria(ini_cronica, fin_ventana)
-    sin_carga = sum(1 for s in sesiones if not s.es_fuerza and s.carga is None)
+    # Solo las corridas aportan carga; otro deporte sin HR no es un hueco.
+    sin_carga = sum(1 for s in sesiones if s.es_run and s.carga is None)
     primera_fecha = repo.primera_fecha()
 
     r_acwr = m_acwr.calcular(
@@ -189,6 +194,10 @@ def construir(
                 "fecha": s.fecha_local,
                 "dia": s.dia_semana,
                 "tipo": s.tipo_strava,
+                # La lista incluye TODA la actividad de la semana, tambien la
+                # que no es carrera. Solo las marcadas `es_run` entran en los
+                # totales de volumen y carga de arriba.
+                "es_run": s.es_run,
                 "nombre": s.nombre,
                 "distancia_km": s.distancia_km,
                 "duracion_min": round(s.duracion_min, 1) if s.duracion_min else None,

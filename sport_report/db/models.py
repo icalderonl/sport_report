@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass
 from datetime import date
 from typing import Any
 
+from ..config import TIPOS_RUN
+
 
 @dataclass(frozen=True)
 class SesionReal:
@@ -27,10 +29,28 @@ class SesionReal:
     decoupling_pct: float | None = None
     carga: float | None = None
     carga_impreciso: bool = False
+    # True cuando ya se pidieron los streams a Strava y respondio, aunque la
+    # actividad no tuviera HR. Sin esto una corrida sin pulsometro (carga NULL)
+    # se vuelve a bajar en cada sincronizacion y gasta cuota para siempre.
+    streams_procesados: bool = False
 
     @property
     def fecha(self) -> date:
         return date.fromisoformat(self.fecha_local)
+
+    @property
+    def es_run(self) -> bool:
+        """Si la sesion cuenta como carrera.
+
+        Derivado de `tipo_strava` y no guardado como columna: el criterio vive
+        en un solo lugar (`config.TIPOS_RUN`) y agregar un tipo nuevo
+        reclasifica el historico sin migrar la base.
+
+        Todo lo que agregue kilometros —volumen semanal, adherencia diaria,
+        grafico— tiene que filtrar por esto. Una salida en bici tambien trae
+        `distancia_km` y sin el filtro entra al volumen de running.
+        """
+        return self.tipo_strava in TIPOS_RUN
 
     @property
     def duracion_min(self) -> float | None:

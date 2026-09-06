@@ -127,9 +127,23 @@ def ejecutar(
     mensaje = formatear_reporte(datos, texto_narrativa)
     enviado = True
     if enviador is not None:
-        enviado = bool(enviador(mensaje))
+        envio = enviador(mensaje)
+        enviado = bool(envio)
         if not enviado:
-            problemas.append("fallo el envio por Telegram")
+            # Un envio a medias no es lo mismo que ninguno: si al menos un
+            # mensaje llego, el atleta tiene parte del reporte y la corrida es
+            # `parcial`. `getattr` porque el enviador puede devolver un bool
+            # pelado (tests, dry-run).
+            llegaron = getattr(envio, "enviadas", 0)
+            totales = getattr(envio, "totales", 0)
+            if llegaron:
+                problemas.append(
+                    f"el envio por Telegram quedo incompleto ({llegaron} de "
+                    f"{totales} mensajes)"
+                )
+                enviado = True
+            else:
+                problemas.append("fallo el envio por Telegram")
 
     # La imagen va aparte del texto: el pie de foto de Telegram son 1024
     # caracteres y el reporte no cabe.
@@ -187,12 +201,21 @@ def main(argv: list[str] | None = None) -> int:
     except (AttributeError, ValueError):  # stdout redirigido o ya fijado
         pass
     a = _args(argv)
-    rango = semana_de(date.fromisoformat(a.semana)) if a.semana else semana_a_reportar()
+    try:
+        rango = semana_de(date.fromisoformat(a.semana)) if a.semana else semana_a_reportar()
+    except ValueError:
+        print(
+            f"--semana espera una fecha YYYY-MM-DD (cualquier dia de la semana "
+            f"a reportar); se recibio '{a.semana}'",
+            file=sys.stderr,
+        )
+        return 2
     log.info("corrida para la semana %s", rango)
 
     repo = Repo()
     corrida = repo.abrir_corrida()
     cliente = None
+    r: Resultado | None = None
     try:
         ingesta = None
         if not a.sin_ingesta:
@@ -210,14 +233,16 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # el motor de calculo o algo imprevisto
         log.exception("la corrida fallo")
         repo.cerrar_corrida(corrida, ERROR, f"{type(exc).__name__}: {exc}")
-        repo.cerrar()
         return 1
     finally:
+        # Pase lo que pase la fila de `corridas` queda cerrada y la conexion
+        # liberada: una corrida abierta para siempre no se distingue despues de
+        # un error real.
         if cliente is not None:
             cliente.cerrar()
-
-    repo.cerrar_corrida(corrida, r.estado, json.dumps(r.problemas, ensure_ascii=False))
-    repo.cerrar()
+        if r is not None:
+            repo.cerrar_corrida(corrida, r.estado, json.dumps(r.problemas, ensure_ascii=False))
+        repo.cerrar()
 
     if a.dry_run:
         print(r.mensaje)

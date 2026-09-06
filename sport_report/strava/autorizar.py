@@ -11,6 +11,7 @@ data/tokens.json a la Pi despues.
 """
 from __future__ import annotations
 
+import secrets
 import sys
 import threading
 import webbrowser
@@ -25,11 +26,27 @@ PUERTO = 8721
 REDIRECT = f"http://localhost:{PUERTO}/exchange_token"
 
 _resultado: dict[str, str] = {}
+# Valor unico por corrida. Sin el, cualquier pagina abierta en el mismo
+# navegador puede pegarle a http://localhost:8721/exchange_token?code=... y
+# dejar la Pi conectada a OTRA cuenta de Strava.
+_estado = ""
 
 
 class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 (nombre impuesto por la clase base)
         q = parse_qs(urlparse(self.path).query)
+        recibido = (q.get("state") or [""])[0]
+        if not secrets.compare_digest(recibido, _estado):
+            _resultado["error"] = (
+                "la respuesta no trae el `state` de esta sesion; se descarta "
+                "(peticion ajena o pestana vieja)"
+            )
+            self.send_response(400)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(_resultado["error"].encode("utf-8"))
+            return
+
         _resultado["code"] = (q.get("code") or [""])[0]
         _resultado["scope"] = (q.get("scope") or [""])[0]
         _resultado["error"] = (q.get("error") or [""])[0]
@@ -53,8 +70,11 @@ def main() -> int:
         print("Falta STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET en .env", file=sys.stderr)
         return 1
 
+    global _estado
+    _estado = secrets.token_urlsafe(24)
+
     auth = StravaAuth()
-    url = auth.url_autorizacion(REDIRECT)
+    url = auth.url_autorizacion(REDIRECT, state=_estado)
 
     print("En la config de tu app en Strava, 'Authorization Callback Domain'")
     print("debe ser exactamente: localhost\n")

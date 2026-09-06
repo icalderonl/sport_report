@@ -111,6 +111,7 @@ class Ingesta:
         act: dict[str, Any],
         streams: dict[str, list[Any]] | None,
         zonas: list[dict[str, int]] | None,
+        streams_procesados: bool = False,
     ) -> SesionReal:
         local = _a_local(act["start_date"])
         tipo = act.get("type") or act.get("sport_type") or "Desconocido"
@@ -143,6 +144,7 @@ class Ingesta:
             decoupling_pct=deriva,
             carga=carga.carga,
             carga_impreciso=carga.impreciso,
+            streams_procesados=streams_procesados,
         )
 
     # -- sincronizacion --------------------------------------------------
@@ -176,15 +178,22 @@ class Ingesta:
                 resumen.otras += 1
 
             streams: dict[str, list[Any]] = {}
+            # Solo se marca cuando Strava efectivamente respondio. Una actividad
+            # sin streams es una respuesta valida (registro manual, subida sin
+            # dispositivo); un fallo de red no lo es y hay que reintentarlo.
+            streams_ok = False
             if es_run:
                 previa = self.repo.sesion(int(act["id"]))
-                if previa is not None and previa.carga is not None and not forzar:
+                if previa is not None and previa.streams_procesados and not forzar:
                     # Ya procesada: no gastar cuota en volver a bajar el stream.
+                    # Se mira `streams_procesados` y no `carga`: una corrida sin
+                    # pulsometro nunca va a tener carga y se re-bajaba siempre.
                     resumen.reutilizadas += 1
                     self._marcar_si_fuerza(act, es_fuerza, resumen)
                     continue
                 try:
                     streams = self.cliente.streams(int(act["id"]))
+                    streams_ok = True
                 except StravaError as exc:
                     log.warning("streams de %s fallaron: %s", act.get("id"), exc)
                 if not streams:
@@ -192,7 +201,7 @@ class Ingesta:
                 elif "heartrate" not in streams:
                     resumen.sin_hr += 1
 
-            sesion = self.normalizar(act, streams, zonas)
+            sesion = self.normalizar(act, streams, zonas, streams_procesados=streams_ok)
             self.repo.guardar_sesion(sesion)
             if es_run and sesion.carga is None:
                 resumen.avisos.append(

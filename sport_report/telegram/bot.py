@@ -6,6 +6,7 @@ exigiria puerto publico y TLS.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from telegram import Update
@@ -47,7 +48,10 @@ def _handler(fn):
         if not _autorizado(update):
             return
         try:
-            texto = fn(update, ctx)
+            # A un hilo: los comandos son sincronos y algunos tardan segundos
+            # (/progreso sincroniza con Strava). Llamarlos aqui congelaba el
+            # event loop y con el todo el long polling.
+            texto = await asyncio.to_thread(fn, update, ctx)
         except Exception:  # nunca dejar al usuario sin respuesta
             log.exception("error manejando el comando")
             texto = "Error interno procesando el comando. Revisa logs/bot.log."
@@ -92,7 +96,8 @@ async def on_volumen(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _autorizado(update):
         return
     try:
-        ruta, texto = comandos.cmd_volumen()
+        # matplotlib dibujando en una Pi tarda lo suyo; fuera del event loop.
+        ruta, texto = await asyncio.to_thread(comandos.cmd_volumen)
     except Exception:
         log.exception("error generando el grafico de volumen")
         await _responder(update, "Error interno generando el grafico. Revisa logs/bot.log.")

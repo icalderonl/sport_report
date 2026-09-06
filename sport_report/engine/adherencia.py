@@ -187,8 +187,10 @@ def _evaluar_dia(
             actividades=ids,
         )
 
-    # Sesion de carrera: la fuerza registrada ese dia no entra en la comparacion.
-    corridas = [s for s in reales if not s.es_fuerza]
+    # Sesion de carrera: solo se compara contra corridas. La fuerza registrada
+    # ese dia no entra, y tampoco la bici o la natacion, que traen distancia
+    # propia y falsearian tanto los km como los minutos del dia.
+    corridas = [s for s in reales if s.es_run]
     unidad = "km" if sesion_plan.objetivo_km() is not None else "min"
     objetivo = sesion_plan.objetivo_km() if unidad == "km" else sesion_plan.objetivo_min()
 
@@ -274,10 +276,13 @@ def calcular(
     for s in sesiones:
         por_fecha.setdefault(s.fecha, []).append(s)
 
-    # El volumen real suma el 100% de la distancia de todas las sesiones,
-    # recuperacion incluida, sin importar como se evaluo cada dia.
+    # El volumen real suma el 100% de la distancia de todas las CORRIDAS,
+    # recuperacion incluida, sin importar como se evaluo cada dia. Otros
+    # deportes quedan fuera: este reporte mide running, y una salida en bici
+    # tambien trae `distancia_km`.
     volumen_real = round(
-        sum(s.distancia_km or 0.0 for lista in por_fecha.values() for s in lista), 2
+        sum(s.distancia_km or 0.0 for lista in por_fecha.values() for s in lista if s.es_run),
+        2,
     )
 
     if plan is None:

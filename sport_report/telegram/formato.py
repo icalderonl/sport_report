@@ -19,7 +19,10 @@ def trozos(texto: str, limite: int = LIMITE_TELEGRAM) -> list[str]:
                 actual, largo = [], 0
             partes.append(linea[:limite])
             linea = linea[limite:]
-        if largo + len(linea) + 1 > limite:
+        # `actual` puede estar vacio si la linea mide exactamente `limite`:
+        # cerrar el trozo ahi metia un "" en la lista y Telegram rechaza un
+        # mensaje vacio con un 400, tumbando el envio entero.
+        if actual and largo + len(linea) + 1 > limite:
             partes.append("\n".join(actual))
             actual, largo = [], 0
         actual.append(linea)

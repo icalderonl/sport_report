@@ -58,7 +58,7 @@ y su ausencia no impide que el reporte llegue.
 |---|---|
 | `/setplan` | Carga el plan de la semana |
 | `/plan` | Plan vigente y estado de fuerza |
-| `/fuerza <dia>` | Marca una sesión de fuerza como cumplida |
+| `/fuerza <dia>` | Marca una sesión de fuerza como cumplida (`anterior`/`proxima` para otra semana) |
 | `/progreso` | Resumen corto: km de los programados y qué entrenamientos quedan |
 | `/volumen` | Gráfico (PNG) de km por semana de las últimas 16 |
 | `/estado` | Qué semana reportaría el cron ahora |
@@ -127,6 +127,12 @@ cualquier cosa que dijera sobre la tendencia sería una conclusión derivada, y 
 verificación posterior solo sabe comprobar números. Si matplotlib falta o falla,
 el reporte llega igual sin imagen y la corrida queda en `parcial`.
 
+**Solo cuentan las actividades de carrera.** El volumen semanal, la adherencia
+diaria y el gráfico filtran por `config.TIPOS_RUN`: una salida en bici también
+trae distancia y sin el filtro entraba a los kilómetros de running. La
+excepción es el día de descanso, que sí se marca como roto por cualquier
+actividad: ahí lo que se evalúa es si hubo descanso, no cuánto se corrió.
+
 **La carga no se mide en kilómetros.** Se usa un TRIMP por zona (minutos en zona
 × peso de zona) recorriendo el stream de HR, porque el plan mezcla sesiones
 prescritas por distancia con otras por tiempo. Una sesión sin pulsómetro **no
@@ -174,7 +180,9 @@ pip install -e ".[dev]"
 python -m pytest -q
 ```
 
-237 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
+281 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
+`tests/test_regresiones.py` fija los bugs ya corregidos: cada test de ahí falla
+si se revierte su arreglo.
 
 ```
 sport_report/

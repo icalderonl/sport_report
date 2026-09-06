@@ -13,3 +13,6 @@ logs/
 
 # Paquete de despliegue, se genera con git archive
 sport_report.tgz
+
+# Auditoria interna: notas de trabajo, no parte del proyecto.
+AUDITORIA.md

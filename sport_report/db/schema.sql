@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS sesiones (
     decoupling_pct  REAL,               -- NULL si el stream no alcanza el minimo
     carga           REAL,               -- TRIMP por zona; NULL si no hay stream de HR
     carga_impreciso INTEGER NOT NULL DEFAULT 0,  -- 1 si se uso peso de zona fallback
+    -- 1 si ya se pidieron los streams y Strava respondio (aunque no hubiera
+    -- HR). Evita re-bajar para siempre los streams de una corrida sin carga.
+    streams_procesados INTEGER NOT NULL DEFAULT 0,
     ingerido_en     TEXT    NOT NULL
 );
 
@@ -41,6 +44,6 @@ CREATE TABLE IF NOT EXISTS corridas (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     inicio_utc   TEXT NOT NULL,
     fin_utc      TEXT,
-    estado       TEXT NOT NULL,   -- ok | error | parcial
+    estado       TEXT NOT NULL,   -- ok | error | parcial | en_curso | interrumpida
     detalle      TEXT
 );

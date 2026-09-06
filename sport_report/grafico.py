@@ -98,10 +98,16 @@ def volumen_png(historico: dict[str, Any], destino: Path | None = None) -> Path 
         )
 
     fig.tight_layout()
-    # Escritura atomica: el bot y el cron pueden dibujar a la vez.
-    tmp = destino.with_suffix(".tmp.png")
+    # Escritura atomica: el bot (/volumen) y el cron pueden dibujar a la vez.
+    # El temporal lleva el PID justamente por eso — con un nombre fijo los dos
+    # procesos escribian el mismo archivo y el `replace` del segundo fallaba o
+    # publicaba un PNG a medias.
+    tmp = destino.with_suffix(f".tmp{os.getpid()}.png")
     try:
         fig.savefig(tmp, format="png", facecolor="white")
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     finally:
         plt.close(fig)
     os.replace(tmp, destino)

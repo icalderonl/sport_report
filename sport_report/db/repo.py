@@ -32,7 +32,26 @@ _CAMPOS = (
     "decoupling_pct",
     "carga",
     "carga_impreciso",
+    "streams_procesados",
 )
+
+# Columnas agregadas despues de la primera version del esquema. `CREATE TABLE
+# IF NOT EXISTS` no las agrega a una base que ya existe, asi que hay que
+# migrarlas a mano. Cada entrada es (columna, definicion, relleno para las
+# filas viejas).
+_MIGRACIONES = (
+    (
+        "streams_procesados",
+        "INTEGER NOT NULL DEFAULT 0",
+        # Una fila con carga ya paso por el stream: no hay que volver a bajarla.
+        # Las que no la tienen se re-piden una vez y quedan marcadas.
+        "UPDATE sesiones SET streams_procesados = 1 WHERE carga IS NOT NULL",
+    ),
+)
+
+# Horas tras las cuales una corrida `en_curso` se da por muerta. El servicio
+# semanal tiene TimeoutStartSec=30min, asi que 6 horas no puede pisar una viva.
+_HORAS_CORRIDA_MUERTA = 6
 
 
 def _ahora_utc() -> str:
@@ -50,7 +69,21 @@ class Repo:
 
     def _init_schema(self) -> None:
         self.con.executescript(RUTA_SCHEMA.read_text(encoding="utf-8"))
+        self._migrar()
         self.con.commit()
+
+    def _migrar(self) -> None:
+        """Agrega columnas nuevas a una base que ya existia. Idempotente."""
+        existentes = {
+            f["name"] for f in self.con.execute("PRAGMA table_info(sesiones)").fetchall()
+        }
+        for columna, definicion, relleno in _MIGRACIONES:
+            if columna in existentes:
+                continue
+            log.info("migrando la base: agregando sesiones.%s", columna)
+            self.con.execute(f"ALTER TABLE sesiones ADD COLUMN {columna} {definicion}")
+            if relleno:
+                self.con.execute(relleno)
 
     def cerrar(self) -> None:
         self.con.close()
@@ -85,8 +118,8 @@ class Repo:
 
     def _fila_a_sesion(self, f: sqlite3.Row) -> SesionReal:
         d = {c: f[c] for c in _CAMPOS}
-        d["es_fuerza"] = bool(d["es_fuerza"])
-        d["carga_impreciso"] = bool(d["carga_impreciso"])
+        for bandera in ("es_fuerza", "carga_impreciso", "streams_procesados"):
+            d[bandera] = bool(d[bandera])
         return SesionReal(**d)
 
     def sesion(self, strava_id: int) -> SesionReal | None:
@@ -127,19 +160,28 @@ class Repo:
         return int(f["n"])
 
     def volumen_semanal(self, hasta: date, semanas: int) -> list[tuple[date, float]]:
-        """km por semana lunes-domingo, la ultima la que contiene `hasta`.
+        """km de CARRERA por semana lunes-domingo, la ultima la que contiene `hasta`.
 
         Devuelve siempre `semanas` entradas, con 0.0 donde no hay datos. Esa
         distincion importa: una semana en cero puede ser descanso real o falta
         de historico, y quien dibuja el grafico no puede saberlo — por eso el
         reporte avisa aparte desde que fecha hay datos.
+
+        Filtra por tipo: una salida en bici tambien trae `distancia_km` y sin
+        esto entraba al volumen de running.
         """
         lunes_final = hasta - timedelta(days=hasta.weekday())
         inicio = lunes_final - timedelta(weeks=semanas - 1)
+        marcas = ", ".join("?" * len(config.TIPOS_RUN))
         filas = self.con.execute(
             "SELECT fecha_local, distancia_km FROM sesiones "
-            "WHERE fecha_local BETWEEN ? AND ? AND distancia_km IS NOT NULL",
-            (inicio.isoformat(), (lunes_final + timedelta(days=6)).isoformat()),
+            "WHERE fecha_local BETWEEN ? AND ? AND distancia_km IS NOT NULL "
+            f"AND tipo_strava IN ({marcas})",
+            (
+                inicio.isoformat(),
+                (lunes_final + timedelta(days=6)).isoformat(),
+                *config.TIPOS_RUN,
+            ),
         ).fetchall()
 
         acum: dict[date, float] = {
@@ -186,11 +228,34 @@ class Repo:
     # -- corridas --------------------------------------------------------
 
     def abrir_corrida(self) -> int:
+        self.sanear_corridas()
         cur = self.con.execute(
             "INSERT INTO corridas (inicio_utc, estado) VALUES (?, 'en_curso')", (_ahora_utc(),)
         )
         self.con.commit()
         return int(cur.lastrowid)
+
+    def sanear_corridas(self) -> int:
+        """Cierra las corridas que quedaron `en_curso` porque el proceso murio.
+
+        Un corte de luz, un OOM o el TimeoutStartSec de systemd dejan la fila
+        abierta para siempre, y el diagnostico no puede distinguirla de un
+        error real. Solo se tocan las viejas: una corrida reciente puede estar
+        viva de verdad.
+        """
+        limite = (
+            datetime.now(timezone.utc) - timedelta(hours=_HORAS_CORRIDA_MUERTA)
+        ).isoformat(timespec="seconds")
+        cur = self.con.execute(
+            "UPDATE corridas SET estado = 'interrumpida', fin_utc = ?, "
+            "detalle = 'el proceso murio sin cerrar la corrida' "
+            "WHERE estado = 'en_curso' AND inicio_utc < ?",
+            (_ahora_utc(), limite),
+        )
+        self.con.commit()
+        if cur.rowcount:
+            log.warning("%d corrida(s) quedaron sin cerrar y se marcaron interrumpidas", cur.rowcount)
+        return int(cur.rowcount)
 
     def cerrar_corrida(self, corrida_id: int, estado: str, detalle: str = "") -> None:
         self.con.execute(

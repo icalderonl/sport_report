@@ -175,7 +175,10 @@ class StravaAuth:
             self._tokens = self.refrescar(self._tokens)
         return self._tokens.access_token
 
-    def url_autorizacion(self, redirect_uri: str) -> str:
+    def url_autorizacion(self, redirect_uri: str, state: str = "") -> str:
+        """URL del consentimiento. `state` viaja de ida y vuelta sin tocarse;
+        quien lo genera debe compararlo antes de canjear el `code` (si no,
+        cualquier pagina abierta en el mismo navegador puede empujar el suyo)."""
         from urllib.parse import urlencode
 
         params = {
@@ -185,4 +188,6 @@ class StravaAuth:
             "approval_prompt": "force",
             "scope": SCOPES,
         }
+        if state:
+            params["state"] = state
         return f"{URL_AUTORIZAR}?{urlencode(params)}"
