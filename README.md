@@ -156,8 +156,16 @@ de histórico, Monotony con desviación 0, carga sin zonas de HR configuradas: t
 eso va marcado con el motivo, nunca presentado como dato fino.
 
 **El LLM narra, no calcula.** Recibe solo el JSON del motor de cálculo, con
-prohibición explícita de introducir cifras nuevas, y después hay una verificación
-en código que compara los números del texto contra los del JSON.
+prohibición explícita de introducir cifras nuevas, y después el texto pasa por
+**dos** verificaciones en código, que atrapan errores distintos: una comprueba
+que cada número del texto *exista* en el JSON (la cifra inventada), y otra que un
+número pegado al nombre de una métrica sea *de esa métrica* (la cifra
+intercambiada). La segunda existe porque la primera no basta: con veinte métricas
+en el JSON, escribir «ACWR 1.32» cuando 1.32 es el Monotony pasa la primera sin
+problemas. Ninguna de las dos descarta el texto —un falso positivo dejaría el
+reporte mudo—, pero una cifra mal atribuida sube a la sección «sobre los datos»
+del mensaje para que el atleta sepa que no se fíe de ese número. Las cifras del
+cuerpo del reporte salen del motor, no del modelo, y siguen siendo válidas.
 
 **El reporte siempre llega.** Si Strava falla se reporta con lo que hay en la
 base, avisando; si Claude falla se reporta sin narrativa. Solo un fallo del envío
@@ -193,7 +201,7 @@ pip install -e ".[dev]"
 python -m pytest -q
 ```
 
-290 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
+315 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
 `tests/test_regresiones.py` fija los bugs ya corregidos: cada test de ahí falla
 si se revierte su arreglo.
 

@@ -8,7 +8,7 @@ import pytest
 from sport_report import run_weekly
 from sport_report.db.repo import Repo
 from sport_report.fechas import semana_de
-from sport_report.narrative.claude import Narrativa
+from sport_report.narrative.claude import Narrativa, redactar
 from sport_report.plan.grammar import parse_plan
 from sport_report.plan.store import PlanStore
 from sport_report.run_weekly import ERROR, OK, PARCIAL, ejecutar
@@ -16,6 +16,7 @@ from sport_report.strava.errors import StravaError
 from sport_report.telegram.formato import formatear_reporte
 from tests.test_engine import sesion
 from tests.test_grammar import PLAN_SPEC
+from tests.test_narrative import ClienteFalso, Respuesta
 
 SEMANA = semana_de(date(2026, 9, 7))
 
@@ -249,3 +250,34 @@ def test_formateo_de_alertas():
     assert "! ACWR 1.8 alto" in m
     assert "carga semanal 100 (imprecisa)" in m
     assert "(-3 vs semana anterior)" in m
+
+
+def test_una_cifra_mal_atribuida_avisa_en_el_reporte(entorno):
+    """El texto igual se manda —el reporte tiene que llegar— pero el atleta
+    tiene que enterarse de que no se fie de ese numero."""
+    repo, store = entorno
+    buzon = Buzon()
+
+    def narrador_confundido(datos):
+        # Pasa por `redactar` de verdad: lo que se prueba es la cadena entera
+        # (verificacion -> Narrativa -> ejecutar -> avisos -> mensaje), no que
+        # `ejecutar` sepa leer un campo.
+        real = datos["monotony"]["monotony"]
+        cliente = ClienteFalso(Respuesta(f"Tu ACWR de la semana fue {real}."))
+        return redactar(datos, cliente=cliente)
+
+    r = ejecutar(SEMANA, repo, store, narrador=narrador_confundido, enviador=buzon, guardar=False)
+
+    assert r.enviado
+    assert "atribuye mal una cifra" in buzon.mensajes[0]
+    assert "SOBRE LOS DATOS" in buzon.mensajes[0]
+    # El texto del modelo sigue en el mensaje: no se descarta.
+    assert "Tu ACWR de la semana fue" in buzon.mensajes[0]
+
+
+def test_una_narrativa_correcta_no_agrega_ese_aviso(entorno):
+    repo, store = entorno
+    buzon = Buzon()
+    ejecutar(SEMANA, repo, store, narrador=narrador_ok, enviador=buzon, guardar=False)
+
+    assert "atribuye mal" not in buzon.mensajes[0]

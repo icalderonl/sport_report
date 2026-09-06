@@ -4,9 +4,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import pytest
+
 
 from sport_report.narrative import claude
-from sport_report.narrative.claude import Narrativa, redactar, verificar_cifras
+from sport_report.narrative.claude import (
+    Narrativa,
+    redactar,
+    verificar_atribucion,
+    verificar_cifras,
+)
 
 DATOS = {
     "semana": {"inicio": "2026-09-07", "fin": "2026-09-13", "numero_plan": 5},
@@ -168,3 +175,131 @@ def test_una_cifra_inventada_se_reporta_pero_no_descarta_el_texto():
 def test_narrativa_serializable():
     n = Narrativa(texto="hola", modelo="claude-haiku-4-5")
     assert n.to_json()["texto"] == "hola"
+
+
+# --------------------------------------------------------------------------
+# Verificacion por metrica: la cifra intercambiada
+# --------------------------------------------------------------------------
+
+# JSON completo, con varias metricas a la vez: es justo la situacion en la que
+# un modelo confunde una con otra.
+COMPLETO = {
+    "volumen": {"planificado_km": 42.6, "real_km": 43.7, "pct": 102.6},
+    "carga": {"semanal": 792.0},
+    "acwr": {"ratio": 1.72, "aguda": 113.1, "cronica": 65.6, "confiable": True},
+    "monotony": {"monotony": 0.97, "strain": 768.2, "confiable": True},
+    "deriva_cardiaca": {"promedio_pct": 3.6, "maximo_pct": 7.8, "n_sesiones": 4},
+    "cadencia": {"valor": 175.8, "semana_anterior": 171.0, "delta": 4.8},
+    "adherencia": {"pct_global": 75.0, "sesiones_cumplidas": 3, "sesiones_evaluables": 4},
+    "umbrales": {"acwr_alto": 1.5, "acwr_bajo": 0.8, "monotony_alta": 2.0,
+                 "decoupling_alto_pct": 5.0},
+    "alertas": [],
+    "avisos_datos": [],
+}
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "Semana solida: 43.7 km de los 42.6 planificados (102.6%).",
+        "El ACWR quedo en 1.72, sobre el umbral de 1.5: hubo un pico de carga.",
+        "Monotony 0.97 y Strain 768.2, ambos dentro de lo esperado.",
+        "La deriva cardiaca promedio fue 3.6% con un maximo de 7.8% en 4 sesiones.",
+        "La cadencia subio a 175.8 spm desde 171.0 la semana pasada.",
+        "Adherencia 75.0%: cumpliste 3 de 4 sesiones evaluables.",
+        "El ratio agudo:cronico es 1.72, con carga aguda 113.1 y cronica 65.6.",
+        "Tu carga semanal fue 792.0.",
+        "La deriva cardiaca maxima de 7.8% supera el umbral de 5.0%.",
+        # Una metrica se nombra junto a varias cifras suyas legitimas: el valor
+        # y su umbral. Las dos tienen que pasar.
+        "Alerta: ACWR 1.72 sobre el umbral 1.5: pico de carga",
+    ],
+)
+def test_una_narrativa_correcta_no_dispara_falsos_positivos(texto):
+    assert verificar_atribucion(texto, COMPLETO) == []
+
+
+@pytest.mark.parametrize(
+    "texto,metrica",
+    [
+        ("El ACWR de la semana fue 0.97.", "ACWR"),          # es el Monotony
+        ("La monotonia quedo en 1.72.", "Monotony"),          # es el ACWR
+        ("La cadencia promedio fue 43.7 spm.", "cadencia"),   # son los km
+        ("La deriva cardiaca promedio fue 1.72%.", "deriva"),  # es el ACWR
+        ("Tu carga semanal fue 768.2.", "carga"),             # es el Strain
+    ],
+)
+def test_detecta_una_cifra_intercambiada(texto, metrica):
+    problemas = verificar_atribucion(texto, COMPLETO)
+
+    assert problemas, f"no detecto la cifra mal atribuida a {metrica}"
+    assert metrica.lower() in problemas[0].lower()
+
+
+def test_la_comprobacion_global_no_ve_la_cifra_intercambiada():
+    """El motivo de que exista la verificacion por metrica.
+
+    0.97 esta en el JSON (es el Monotony), asi que la comprobacion global la da
+    por buena aunque el texto la presente como el ACWR.
+    """
+    texto = "El ACWR de la semana fue 0.97."
+
+    assert verificar_cifras(texto, COMPLETO) == []
+    assert verificar_atribucion(texto, COMPLETO)
+
+
+def test_citar_una_metrica_que_el_motor_dejo_en_null():
+    """Si el ACWR no se pudo calcular, cualquier numero pegado a ACWR esta mal."""
+    datos = dict(COMPLETO, acwr={"ratio": None, "aguda": None, "cronica": None})
+
+    problemas = verificar_atribucion("El ACWR de esta semana fue 1.3.", datos)
+
+    assert problemas == ["ACWR: el texto dice 1.3 y el JSON trae null"]
+
+
+def test_decir_que_no_hay_dato_no_es_atribuir_mal():
+    datos = dict(COMPLETO, acwr={"ratio": None})
+
+    assert verificar_atribucion("El ACWR no se pudo calcular todavia.", datos) == []
+
+
+def test_un_numero_de_otra_frase_no_se_atribuye_a_la_metrica():
+    """La ventana es corta a proposito: sin eso, cualquier cifra posterior
+    quedaba colgada del ultimo nombre de metrica que apareciera."""
+    texto = "El ACWR no es confiable todavia. En total corriste 43.7 km."
+
+    assert verificar_atribucion(texto, COMPLETO) == []
+
+
+def test_tolera_coma_decimal_y_redondeo():
+    assert verificar_atribucion("El ACWR fue 1,72.", COMPLETO) == []
+    assert verificar_atribucion("El ACWR ronda 1.7.", COMPLETO) == []
+    assert verificar_atribucion("El ACWR fue 0,97.", COMPLETO)  # sigue siendo el Monotony
+
+
+def test_el_valor_absoluto_de_un_delta_negativo_es_legitimo():
+    """El JSON trae delta -4.8 y el texto dice "bajo 4.8": es la misma cifra."""
+    datos = dict(COMPLETO, cadencia={"valor": 171.0, "semana_anterior": 175.8, "delta": -4.8})
+
+    assert verificar_atribucion("La cadencia bajo 4.8 spm.", datos) == []
+
+
+def test_la_narrativa_registra_la_cifra_mal_atribuida():
+    cliente = ClienteFalso(Respuesta("El ACWR de la semana fue 0.97."))
+
+    n = redactar(COMPLETO, cliente=cliente)
+
+    assert n.ok  # no se descarta el texto: el reporte tiene que llegar
+    assert n.cifras_mal_atribuidas
+    assert n.to_json()["cifras_mal_atribuidas"]
+
+
+def test_el_cliente_se_construye_con_reintentos_explicitos():
+    """L3: el SDK ya reintenta solo, pero con el default pensado para trafico
+    interactivo. Aca un fallo cuesta la narrativa de la semana entera."""
+    anthropic = pytest.importorskip("anthropic")
+    cliente = claude._cliente("clave-de-prueba")
+
+    assert isinstance(cliente, anthropic.Anthropic)
+    assert cliente.max_retries == claude.REINTENTOS
+    assert claude.REINTENTOS > anthropic._constants.DEFAULT_MAX_RETRIES

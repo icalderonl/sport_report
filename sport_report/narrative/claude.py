@@ -1,9 +1,18 @@
 """Capa narrativa: una llamada semanal a la API de Claude.
 
 El LLM narra, no calcula. Recibe unicamente el JSON del motor de calculo (fase 5)
-y tiene prohibido introducir cifras que no esten ahi. Ademas, la narrativa se
-verifica despues contra el JSON: los numeros que aparecen en el texto tienen que
-existir en los datos.
+y tiene prohibido introducir cifras que no esten ahi. Despues el texto pasa por
+dos comprobaciones distintas, que atrapan errores distintos:
+
+  - `verificar_cifras`: cada numero del texto tiene que EXISTIR en el JSON.
+    Atrapa la cifra inventada de la nada.
+  - `verificar_atribucion`: un numero pegado al nombre de una metrica tiene que
+    ser de esa metrica. Atrapa la cifra intercambiada —"ACWR 1.32" cuando 1.32
+    es el Monotony—, que la primera deja pasar porque 1.32 si esta en el JSON.
+
+Ninguna de las dos descarta el texto: un falso positivo dejaria el reporte mudo.
+La primera queda en el log y en el JSON; la segunda, ademas, sube a
+`avisos_datos` para que el atleta sepa que no se fie de ese numero.
 
 Si la API falla por lo que sea, esta capa devuelve `texto=None` y el reporte se
 envia igual sin la parte narrativa (spec 10): nunca hace caer la corrida.
@@ -22,6 +31,14 @@ log = logging.getLogger(__name__)
 
 MAX_TOKENS = 1024
 TIMEOUT_S = 60.0
+
+# El SDK ya reintenta solo (por defecto 2 veces, con backoff y respetando
+# retry-after) ante fallo de red, 429 y 5xx. Se sube y se deja explicito porque
+# el default esta pensado para trafico interactivo y esto es otra cosa: se
+# ejecuta una vez por semana, un fallo cuesta la narrativa de esa semana entera,
+# y la unidad de systemd tolera 30 minutos. Un `overloaded_error` de un minuto
+# no deberia costar el resumen.
+REINTENTOS = 5
 
 SISTEMA = """\
 Eres el redactor de un reporte semanal de entrenamiento de running. Recibes un
@@ -62,6 +79,8 @@ class Narrativa:
     tokens_entrada: int = 0
     tokens_salida: int = 0
     numeros_no_verificados: list[str] = field(default_factory=list)
+    # Cifras pegadas al nombre de una metrica que no son de esa metrica.
+    cifras_mal_atribuidas: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -75,6 +94,7 @@ class Narrativa:
             "tokens_entrada": self.tokens_entrada,
             "tokens_salida": self.tokens_salida,
             "numeros_no_verificados": self.numeros_no_verificados,
+            "cifras_mal_atribuidas": self.cifras_mal_atribuidas,
         }
 
 
@@ -119,6 +139,148 @@ def _norm(valor: Any) -> str:
     return f"{f:.10g}"
 
 
+# --------------------------------------------------------------------------
+# Verificacion por metrica (atribucion)
+# --------------------------------------------------------------------------
+#
+# `verificar_cifras` comprueba que un numero EXISTA en el JSON, no que este bien
+# usado. Con veinte metricas ahi dentro, el error mas probable de un modelo no
+# es inventar una cifra de la nada sino intercambiarlas: escribir "ACWR 1.32"
+# cuando 1.32 es el Monotony pasa la comprobacion global sin problemas, porque
+# 1.32 si esta en el JSON.
+#
+# Esto es lo contrario: se busca el nombre de la metrica en el texto y se exige
+# que el numero pegado a el sea uno de LOS SUYOS. No se compara contra un unico
+# valor porque una misma metrica se nombra junto a varias cifras legitimas —
+# "ACWR 1.72 sobre el umbral 1.5" menciona el ratio y el umbral—, asi que cada
+# metrica declara todas las rutas que puede citar.
+
+# Cuantos caracteres se toleran entre el nombre de la metrica y su numero. Sin
+# saltos de linea: si hay que cruzar una, ya no es la misma frase.
+_VENTANA = 24
+_NUM = r"-?\d+(?:[.,]\d+)?"
+
+
+def _patron(alternativas: str) -> re.Pattern[str]:
+    return re.compile(rf"(?:{alternativas})[^\d\n]{{0,{_VENTANA}}}({_NUM})", re.I)
+
+
+# (nombre legible, patron, rutas del JSON que esa metrica puede citar)
+METRICAS: tuple[tuple[str, re.Pattern[str], tuple[tuple[str, ...], ...]], ...] = (
+    (
+        "ACWR",
+        _patron(r"ACWR|ratio agudo[- :/]*cronico"),
+        (
+            ("acwr", "ratio"),
+            ("acwr", "aguda"),
+            ("acwr", "cronica"),
+            ("umbrales", "acwr_alto"),
+            ("umbrales", "acwr_bajo"),
+        ),
+    ),
+    (
+        "Monotony",
+        _patron(r"monoton[iy]a?"),
+        (("monotony", "monotony"), ("umbrales", "monotony_alta")),
+    ),
+    ("Strain", _patron(r"strain"), (("monotony", "strain"),)),
+    (
+        "deriva cardiaca",
+        _patron(r"deriva cardiaca|deriva card[ií]aca|decoupling"),
+        (
+            ("deriva_cardiaca", "promedio_pct"),
+            ("deriva_cardiaca", "maximo_pct"),
+            ("deriva_cardiaca", "n_sesiones"),
+            ("umbrales", "decoupling_alto_pct"),
+        ),
+    ),
+    (
+        "cadencia",
+        _patron(r"cadencia"),
+        (
+            ("cadencia", "valor"),
+            ("cadencia", "semana_anterior"),
+            ("cadencia", "delta"),
+            ("cadencia", "n_sesiones"),
+        ),
+    ),
+    (
+        "adherencia",
+        _patron(r"adherencia"),
+        (
+            ("adherencia", "pct_global"),
+            ("adherencia", "sesiones_cumplidas"),
+            ("adherencia", "sesiones_evaluables"),
+        ),
+    ),
+    (
+        "carga semanal",
+        _patron(r"carga semanal|carga de la semana"),
+        (("carga", "semanal"), ("monotony", "carga_semanal")),
+    ),
+)
+
+
+def _valor_en(datos: Any, ruta: tuple[str, ...]) -> Any:
+    for clave in ruta:
+        if not isinstance(datos, dict) or clave not in datos:
+            return None
+        datos = datos[clave]
+    return datos
+
+
+def _valores_legitimos(datos: dict[str, Any], rutas: tuple[tuple[str, ...], ...]) -> set[str]:
+    """Formas aceptables de las cifras de una metrica.
+
+    Se tolera el redondeo a UN decimal y nada mas. `verificar_cifras` acepta
+    ademas el redondeo a entero, pero aca eso rompe la comprobacion: `round(0.8)`
+    y `round(0.97)` valen los dos 1, asi que el Monotony 0.97 colaba como si
+    fuera el umbral `acwr_bajo` 0.8, que es exactamente la confusion que esto
+    tiene que detectar. Lo mismo con 1.5 y 1.72, que redondean los dos a 2.
+    """
+    salida: set[str] = set()
+    for ruta in rutas:
+        valor = _valor_en(datos, ruta)
+        if valor is None or isinstance(valor, bool) or not isinstance(valor, (int, float)):
+            continue
+        for forma in (float(valor), abs(float(valor))):
+            salida.add(_norm(forma))
+            salida.add(_norm(round(forma, 1)))
+    return salida
+
+
+def verificar_atribucion(texto: str, datos: dict[str, Any]) -> list[str]:
+    """Cifras que el texto atribuye a una metrica y no son de esa metrica.
+
+    Es una senal mucho mas fuerte que la de `verificar_cifras`: aca hay una
+    afirmacion concreta ("el ACWR es X") y un valor de referencia concreto con
+    el que contrastarla.
+
+    Tambien atrapa el caso de citar una metrica que el motor dejo en `null`: si
+    el ACWR no se pudo calcular, cualquier numero pegado a la palabra ACWR esta
+    mal, venga de donde venga.
+    """
+    problemas: list[str] = []
+    for nombre, patron, rutas in METRICAS:
+        legitimos = _valores_legitimos(datos, rutas)
+        for bruto in patron.findall(texto):
+            n = _norm(bruto)
+            if n in legitimos:
+                continue
+            try:
+                f = float(n)
+            except ValueError:
+                continue
+            if _norm(round(f, 1)) in legitimos:
+                continue
+            esperado = _valor_en(datos, rutas[0])
+            problemas.append(
+                f"{nombre}: el texto dice {bruto} y el JSON trae "
+                f"{'null' if esperado is None else esperado}"
+            )
+    return problemas
+
+
 def verificar_cifras(texto: str, datos: dict[str, Any]) -> list[str]:
     """Numeros del texto que no aparecen en el JSON.
 
@@ -160,7 +322,7 @@ def _cliente(api_key: str):
     # haya API key configurada.
     import anthropic
 
-    return anthropic.Anthropic(api_key=api_key, timeout=TIMEOUT_S)
+    return anthropic.Anthropic(api_key=api_key, timeout=TIMEOUT_S, max_retries=REINTENTOS)
 
 
 def _texto_de(respuesta: Any) -> str:
@@ -224,10 +386,19 @@ def redactar(
         # pero queda en el log y en el JSON para poder auditarlo.
         log.warning("la narrativa trae cifras que no estan en el JSON: %s", sospechosos)
 
+    mal_atribuidas = verificar_atribucion(texto, datos)
+    if mal_atribuidas:
+        # Mas grave que lo anterior: no es una cifra que no se pueda ubicar, es
+        # una cifra presentada como algo que no es. Tampoco se descarta el texto
+        # —el reporte tiene que llegar— pero sube a `avisos_datos` para que el
+        # atleta sepa que no se fie de ese numero.
+        log.error("la narrativa atribuye mal una cifra: %s", mal_atribuidas)
+
     return Narrativa(
         texto=texto,
         modelo=getattr(respuesta, "model", modelo),
         tokens_entrada=getattr(uso, "input_tokens", 0) or 0,
         tokens_salida=getattr(uso, "output_tokens", 0) or 0,
         numeros_no_verificados=sospechosos,
+        cifras_mal_atribuidas=mal_atribuidas,
     )

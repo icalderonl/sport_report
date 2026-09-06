@@ -102,6 +102,18 @@ def ejecutar(
             datos["narrativa"] = n.to_json()
             if n.numeros_no_verificados:
                 log.warning("cifras sin respaldo en la narrativa: %s", n.numeros_no_verificados)
+            # Una cifra mal atribuida —un numero presentado como el ACWR que no
+            # es el ACWR— no se queda solo en el log: el texto igual se manda,
+            # porque el reporte tiene que llegar, pero el atleta tiene que saber
+            # que no se fie de ese numero. Las cifras del cuerpo del reporte,
+            # que salen del motor y no del modelo, siguen siendo validas.
+            mal = getattr(n, "cifras_mal_atribuidas", [])
+            if mal:
+                datos["avisos_datos"] = list(datos["avisos_datos"]) + [
+                    "el resumen automatico atribuye mal una cifra ("
+                    + "; ".join(mal)
+                    + "). Fiate de los numeros de abajo, no de los del resumen"
+                ]
         else:
             log.warning("sin narrativa: %s", n.error)
             problemas.append(f"resumen automatico no disponible ({n.error})")
