@@ -3,18 +3,24 @@ name = "sport-report"
 version = "0.1.0"
 description = "Reporte semanal de entrenamiento de running (Strava -> metricas -> Telegram)"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+# Con techo a proposito. El despliegue en la Pi es `pip install -e .` contra
+# PyPI: sin tope, reconstruir el venv dentro de un ano puede traer un major con
+# cambios incompatibles y romper el cron sin que nadie haya tocado el codigo.
+# Los pisos son los minimos con los que se probo; los topes, el proximo major.
 dependencies = [
-    "httpx>=0.27",
-    "python-telegram-bot>=21.0",
-    "python-dotenv>=1.0",
-    "anthropic>=1.0",
+    "httpx>=0.27,<1.0",
+    "python-telegram-bot>=21.0,<23.0",
+    "python-dotenv>=1.0,<2.0",
+    "anthropic>=1.0,<2.0",
     # Solo para el grafico de volumen. Se importa perezoso: si falta, el
     # reporte llega igual sin imagen.
-    "matplotlib>=3.8",
+    "matplotlib>=3.8,<4.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0,<9.0"]
 
 [build-system]
 requires = ["setuptools>=68"]

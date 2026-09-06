@@ -302,4 +302,7 @@ def test_el_cliente_se_construye_con_reintentos_explicitos():
 
     assert isinstance(cliente, anthropic.Anthropic)
     assert cliente.max_retries == claude.REINTENTOS
-    assert claude.REINTENTOS > anthropic._constants.DEFAULT_MAX_RETRIES
+    # No se compara contra el default del SDK: vive en `anthropic._constants`,
+    # que es privado y no tiene por que seguir ahi en la proxima version. Lo
+    # que importa es que este puesto a proposito y sea mas paciente que 2.
+    assert claude.REINTENTOS > 2

@@ -1,5 +1,7 @@
 __pycache__/
 *.py[cod]
+# Metadata que deja `pip install -e .`
+*.egg-info/
 .venv/
 venv/
 .env

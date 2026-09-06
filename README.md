@@ -201,7 +201,13 @@ pip install -e ".[dev]"
 python -m pytest -q
 ```
 
-315 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
+**Desarrolla en 3.11 o superior**, no solo porque lo diga `pyproject.toml`.
+En un intérprete más viejo `pip` descarta en silencio las versiones que piden
+3.10+ y resuelve a otras: con Python 3.9 instala `anthropic` 0.x mientras que
+la Pi usa 1.x. Los tests pasan igual y estarías probando contra un major que
+en producción no existe. La CI corre en 3.11 y 3.12 justamente por esto.
+
+331 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
 `tests/test_regresiones.py` fija los bugs ya corregidos: cada test de ahí falla
 si se revierte su arreglo.
 
@@ -225,3 +231,7 @@ deploy/             instalar.sh, unidades systemd y los cuatro runbooks
 .github/workflows/  CI: la suite en Python 3.11 y 3.12
 assets/             logo del servicio y el script que lo regenera
 ```
+
+## Licencia
+
+MIT. Ver [LICENSE](LICENSE).
