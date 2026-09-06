@@ -108,6 +108,43 @@ tail -f /opt/sport_report/logs/run_weekly.log
 sudo systemctl start sport-report-weekly.service
 ```
 
+### Respaldo de `data/`
+
+La corrida semanal deja una copia en `BACKUP_DIR` (por defecto
+`/opt/sport_report/respaldos`) y conserva las últimas 8. Se puede forzar a mano:
+
+```bash
+sudo -u sportreport /opt/sport_report/.venv/bin/python -m sport_report.respaldo
+```
+
+**El destino por defecto está en la misma SD que el original**, así que sirve
+contra un borrado accidental pero no contra la muerte de la tarjeta, que es el
+fallo típico de una Pi. Para que valga de verdad, monta otro medio y apúntalo:
+
+```bash
+# En /etc/fstab, por ejemplo un pendrive
+sudo mkdir -p /mnt/respaldo
+echo 'BACKUP_DIR=/mnt/respaldo/sport_report' | sudo tee -a /opt/sport_report/.env
+sudo systemctl restart sport-report-bot
+```
+
+`diagnostico` avisa si el último respaldo tiene más de 8 días (la corrida
+semanal debería dejar uno cada lunes) y si el destino sigue en la misma máquina.
+
+#### Restaurar
+
+Los respaldos son carpetas con fecha; dentro está lo mismo que en `data/`.
+
+```bash
+sudo systemctl stop sport-report-bot
+sudo -u sportreport cp -r /mnt/respaldo/sport_report/2026-09-07T07-00/. /opt/sport_report/data/
+sudo systemctl start sport-report-bot
+sudo -u sportreport /opt/sport_report/.venv/bin/python -m sport_report.diagnostico
+```
+
+Detener el bot antes no es opcional: si escribe mientras se restaura, la base
+queda con una mezcla de las dos versiones.
+
 ### Actualizar el código
 
 ```bash

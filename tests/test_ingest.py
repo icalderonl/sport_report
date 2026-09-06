@@ -11,7 +11,7 @@ from sport_report.db.repo import Repo
 from sport_report.fechas import semana_de
 from sport_report.plan.grammar import parse_plan
 from sport_report.plan.store import PlanStore
-from sport_report.strava.ingest import Ingesta, ResumenIngesta
+from sport_report.strava.ingest import Ingesta
 from tests.test_grammar import PLAN_SPEC
 from tests.test_metricas import ZONAS, stream_plano
 

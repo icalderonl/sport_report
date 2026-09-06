@@ -4,7 +4,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-import pytest
 
 from sport_report.narrative import claude
 from sport_report.narrative.claude import Narrativa, redactar, verificar_cifras

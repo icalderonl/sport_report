@@ -210,3 +210,5 @@ class StravaClient:
         if self._http is not None:
             self._http.close()
             self._http = None
+        # El cliente de auth es otro: sin esto quedaba abierto para siempre.
+        self.auth.cerrar()

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -25,6 +25,12 @@ def _path(env: str, default: str) -> Path:
 
 DATA_DIR = _path("DATA_DIR", "data")
 LOG_DIR = _path("LOG_DIR", "logs")
+# Fuera de data/ a proposito: no tiene sentido guardar el respaldo dentro de
+# lo que se respalda. Apuntarlo a otro medio (pendrive, NAS) es lo unico que
+# protege contra la muerte de la SD de la Pi.
+BACKUP_DIR = _path("BACKUP_DIR", "respaldos")
+# Con la corrida semanal enganchada, 8 son unos dos meses de historia.
+RESPALDOS_CONSERVAR = int(os.getenv("BACKUP_KEEP", "8"))
 
 DB_PATH = DATA_DIR / "sport_report.db"
 TOKENS_PATH = DATA_DIR / "tokens.json"

@@ -7,10 +7,10 @@ Nunca imprime el valor de un secreto, solo si esta presente.
 """
 from __future__ import annotations
 
+import os
 import sys
 import time
-from datetime import timedelta
-from pathlib import Path
+from datetime import datetime, timedelta
 
 from . import config
 from .db.repo import Repo
@@ -102,12 +102,32 @@ def main() -> int:
     linea(OK, "Zona horaria", str(config.TZ))
     linea(OK, "Semana a reportar", str(semana_a_reportar()))
 
-    for nombre, mod in (("httpx", "httpx"), ("telegram", "telegram"), ("anthropic", "anthropic")):
+    # `anthropic` y `matplotlib` degradan (reporte sin narrativa / sin imagen);
+    # sin httpx o telegram no hay sistema.
+    opcionales = ("anthropic", "matplotlib")
+    for mod in ("httpx", "telegram", "anthropic", "matplotlib"):
         try:
             __import__(mod)
-            linea(OK, f"dependencia {nombre}", "instalada")
+            linea(OK, f"dependencia {mod}", "instalada")
         except ImportError:
-            linea(AVISO if mod == "anthropic" else FALLA, f"dependencia {nombre}", "no instalada")
+            linea(
+                AVISO if mod in opcionales else FALLA,
+                f"dependencia {mod}",
+                "no instalada"
+                + (" (el reporte llega sin grafico)" if mod == "matplotlib" else ""),
+            )
+
+    # Un chown mal puesto en el instalador no se nota hasta que el cron intenta
+    # escribir, y ahi ya se perdio el reporte de la semana.
+    for etiqueta, ruta in (("data/", config.DATA_DIR), ("logs/", config.LOG_DIR)):
+        try:
+            ruta.mkdir(parents=True, exist_ok=True)
+            testigo = ruta / f".escritura-{os.getpid()}"
+            testigo.write_text("x", encoding="utf-8")
+            testigo.unlink()
+            linea(OK, f"escritura en {etiqueta}", str(ruta))
+        except OSError as exc:
+            linea(FALLA, f"escritura en {etiqueta}", f"{ruta}: {exc}")
 
     # -- credenciales ----------------------------------------------------
     seccion("CREDENCIALES")
@@ -229,6 +249,34 @@ def main() -> int:
     huerfanos = list(config.DATA_DIR.glob("*.lock")) if config.DATA_DIR.exists() else []
     if huerfanos:
         linea(AVISO, "locks huerfanos", ", ".join(p.name for p in huerfanos))
+
+    # -- respaldo --------------------------------------------------------
+    seccion("RESPALDO")
+    from .respaldo import ultimo
+
+    reciente = ultimo()
+    if reciente is None:
+        linea(
+            AVISO,
+            "ultimo respaldo",
+            f"ninguno en {config.BACKUP_DIR}; corre python -m sport_report.respaldo",
+        )
+    else:
+        dias = (datetime.now() - datetime.fromtimestamp(reciente.stat().st_mtime)).days
+        # La corrida semanal deja uno cada lunes: mas de 8 dias significa que
+        # hace al menos dos semanas que no corre, o que falla al respaldar.
+        linea(
+            OK if dias <= 8 else AVISO,
+            "ultimo respaldo",
+            f"{reciente.name} (hace {dias} dia(s))",
+        )
+        if config.BACKUP_DIR.is_relative_to(config.ROOT):
+            linea(
+                AVISO,
+                "destino del respaldo",
+                "esta en la misma maquina que el original: no protege contra la "
+                "muerte de la SD. Apunta BACKUP_DIR a otro medio",
+            )
 
     # -- veredicto -------------------------------------------------------
     veredicto = ("todo en orden", "funciona con advertencias", "hay fallas que impiden operar")

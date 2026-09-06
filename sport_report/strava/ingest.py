@@ -100,7 +100,9 @@ class Ingesta:
 
         cacheadas, origen = self.repo.zonas()
         if cacheadas:
-            return cacheadas, "strava"
+            # `repo.zonas()` solo devuelve zonas cuando el origen fue Strava;
+            # se propaga el que trae en vez de reafirmarlo con un literal.
+            return cacheadas, origen or "strava"
         self.repo.guardar_zonas(None, "fallback")
         return None, "fallback"
 

@@ -1,7 +1,7 @@
 """Tests del orquestador y del formateo del mensaje."""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 
 import pytest
 

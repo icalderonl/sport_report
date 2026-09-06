@@ -99,6 +99,8 @@ class StravaAuth:
         )
         self.store = store or TokenStore()
         self._http = http
+        # Solo se cierra el cliente que crea esta clase, no uno inyectado.
+        self._http_propio = False
         self._tokens: Tokens | None = None
 
     # -- HTTP ------------------------------------------------------------
@@ -107,7 +109,20 @@ class StravaAuth:
     def http(self) -> httpx.Client:
         if self._http is None:
             self._http = httpx.Client(timeout=30)
+            self._http_propio = True
         return self._http
+
+    def cerrar(self) -> None:
+        """Cierra el cliente HTTP si lo creo esta clase.
+
+        Sin esto quedaba un socket colgando por cada refresco, y el bot corre
+        24/7. No se toca un cliente inyectado desde fuera: el dueño es quien lo
+        creo, y en los tests es compartido.
+        """
+        if self._http is not None and self._http_propio:
+            self._http.close()
+            self._http = None
+            self._http_propio = False
 
     def _post_token(self, extra: dict[str, str]) -> Tokens:
         if not self.client_id or not self.client_secret:

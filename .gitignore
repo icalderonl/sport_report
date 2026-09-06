@@ -11,6 +11,10 @@ data/
 logs/
 .pytest_cache/
 
+# Copias de data/. Se generan con `python -m sport_report.respaldo`; ahi
+# adentro va el mismo refresh_token y el mismo historico que en data/.
+respaldos/
+
 # Paquete de despliegue, se genera con git archive
 sport_report.tgz
 

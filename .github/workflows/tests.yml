@@ -1,0 +1,64 @@
+# Corre la suite en las versiones de Python que el proyecto declara soportar.
+#
+# Existe por dos motivos concretos: la suite es la unica red de seguridad del
+# sistema (nadie mira el reporte del lunes hasta que llega mal), y el piso de
+# version no lo verificaba nada salvo `instalar.sh` en la Pi — en una maquina de
+# desarrollo con Python 3.9 los tests pasaban igual, tapando el problema hasta
+# el despliegue.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Para poder dispararlo a mano desde la pestaña Actions.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 es el minimo que declara pyproject.toml; 3.12 es hacia donde va
+        # Raspberry Pi OS. Si una de las dos rompe, hay que saberlo aca.
+        python: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Tests
+        # Ninguno toca la red: Strava, Telegram y Claude van con dobles. Si
+        # alguna vez uno intenta salir a internet, conviene que falle aca y no
+        # en la Pi.
+        run: python -m pytest -q
+
+      - name: El diagnostico corre sin configuracion
+        # Es la primera herramienta que se usa cuando algo falla en produccion,
+        # asi que tiene que sobrevivir a un entorno sin .env ni base.
+        #
+        # No se mira el codigo de salida: sin configuracion devuelve 2 (correcto,
+        # hay fallas), pero un traceback devuelve 1, que es el mismo codigo que
+        # "solo advertencias". Lo que distingue una corrida sana es haber llegado
+        # a imprimir el veredicto final.
+        run: |
+          salida=$(python -m sport_report.diagnostico 2>&1) || true
+          echo "$salida"
+          echo "$salida" | grep -q '^=>' || {
+            echo "::error::el diagnostico no llego a imprimir su veredicto"
+            exit 1
+          }

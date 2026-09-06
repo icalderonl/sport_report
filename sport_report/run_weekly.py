@@ -183,7 +183,28 @@ def _args(argv: list[str] | None):
     p.add_argument("--dry-run", action="store_true", help="imprime el mensaje en vez de enviarlo")
     p.add_argument("--sin-ingesta", action="store_true", help="no consulta Strava")
     p.add_argument("--sin-narrativa", action="store_true", help="no llama a la API de Claude")
+    p.add_argument("--sin-respaldo", action="store_true", help="no respalda data/ al terminar")
     return p.parse_args(argv)
+
+
+def _respaldar(log_: logging.Logger) -> None:
+    """Copia data/ al terminar la corrida. Nunca puede hacer fracasar el reporte.
+
+    Va enganchado aca y no en un timer propio para no sumar unidades de systemd
+    al despliegue: la corrida semanal ya se ejecuta una vez por semana, que es
+    la cadencia que tiene sentido.
+
+    Se hace al FINAL a proposito: la ingesta puede haber rotado el refresh_token
+    de Strava, y un respaldo con el token anterior —que Strava ya invalido— no
+    sirve para restaurar.
+    """
+    try:
+        from .respaldo import respaldar
+
+        carpeta, piezas = respaldar()
+        log_.info("respaldo en %s (%d piezas)", carpeta, len(piezas))
+    except Exception as exc:  # disco lleno, medio desmontado, permisos
+        log_.warning("no se pudo respaldar data/: %s", exc)
 
 
 def _mostrar_foto(ruta, caption: str = "") -> bool:
@@ -243,6 +264,10 @@ def main(argv: list[str] | None = None) -> int:
         if r is not None:
             repo.cerrar_corrida(corrida, r.estado, json.dumps(r.problemas, ensure_ascii=False))
         repo.cerrar()
+        # Despues de cerrar la base, y tambien cuando la corrida fallo: una
+        # corrida rota no es motivo para quedarse sin copia de los tokens.
+        if not a.sin_respaldo:
+            _respaldar(log)
 
     if a.dry_run:
         print(r.mensaje)

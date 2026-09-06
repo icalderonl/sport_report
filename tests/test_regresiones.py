@@ -17,7 +17,6 @@ import httpx
 import pytest
 
 from sport_report import fechas, storage
-from sport_report.config import TZ
 from sport_report.db.models import SesionReal
 from sport_report.db.repo import Repo
 from sport_report.engine import adherencia, foster, report

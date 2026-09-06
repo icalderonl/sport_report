@@ -144,9 +144,10 @@ def construir(
             "pide el plan: figuran como dato faltante, no como incumplimiento"
         )
 
-    alertas = [
-        a for a in (r_acwr.alerta, r_foster.alerta, _decoupling(sesiones, umbrales)["alerta"]) if a
-    ]
+    # Una sola vez: es pura y barata, pero calcularla en dos sitios es lo que
+    # se desincroniza cuando alguien le agrega un parametro.
+    r_deriva = _decoupling(sesiones, umbrales)
+    alertas = [a for a in (r_acwr.alerta, r_foster.alerta, r_deriva["alerta"]) if a]
 
     return {
         "version": VERSION_REPORTE,
@@ -186,7 +187,7 @@ def construir(
         },
         "acwr": r_acwr.to_json(),
         "monotony": r_foster.to_json(),
-        "deriva_cardiaca": _decoupling(sesiones, umbrales),
+        "deriva_cardiaca": r_deriva,
         "cadencia": _cadencia(sesiones, sesiones_previas).to_json(),
         "adherencia": r_adh.to_json(),
         "sesiones": [

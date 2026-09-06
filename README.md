@@ -2,6 +2,8 @@
 
 # Sistema de reporte semanal de entrenamiento
 
+[![tests](https://github.com/icalderonl/sport_report/actions/workflows/tests.yml/badge.svg)](https://github.com/icalderonl/sport_report/actions/workflows/tests.yml)
+
 Corre en una Raspberry Pi, se dispara solo los **lunes a las 07:00** y manda por
 Telegram el reporte de la semana de running que acaba de cerrar: adherencia al
 plan, carga (ACWR, Monotony/Strain), deriva cardíaca, un gráfico del volumen de
@@ -74,10 +76,11 @@ y su ausencia no impide que el reporte llegue.
 | `python -m sport_report.strava.backfill 120` | Historial inicial: 28 días para ACWR, 112 para el gráfico |
 | `python -m sport_report.narrative.probar` | Prueba la capa narrativa |
 | `python -m sport_report.telegram.bot` | Levanta el bot en primer plano |
+| `python -m sport_report.respaldo [destino]` | Copia `data/` (base, tokens, planes) |
 
 `run_weekly` acepta además `--semana YYYY-MM-DD` para reprocesar una semana
-concreta, `--sin-ingesta` para no tocar Strava y `--sin-narrativa` para no llamar
-a Claude.
+concreta, `--sin-ingesta` para no tocar Strava, `--sin-narrativa` para no llamar
+a Claude y `--sin-respaldo` para no copiar `data/` al terminar.
 
 ## Formato del plan
 
@@ -160,6 +163,16 @@ en código que compara los números del texto contra los del JSON.
 base, avisando; si Claude falla se reporta sin narrativa. Solo un fallo del envío
 por Telegram hace fracasar la corrida.
 
+**`data/` se respalda en cada corrida semanal.** Ahí viven el `refresh_token`,
+todo el histórico y los planes archivados, en una sola SD. La base se copia con
+la API de backup de SQLite y no con `cp`: el bot puede estar escribiendo y, con
+WAL activo, copiar el archivo suelto da una base inconsistente. Va **al final**
+de la corrida porque la ingesta puede haber rotado el `refresh_token`, y un
+respaldo con el token anterior no sirve para restaurar. Por defecto queda en
+`./respaldos`, que protege contra un borrado accidental pero **no** contra la
+muerte de la tarjeta: apunta `BACKUP_DIR` a otro medio. Que falle nunca hace
+fracasar el reporte.
+
 **El `refresh_token` de Strava rota.** Se persiste en `data/tokens.json` de forma
 atómica en cada intercambio, antes de usarse. Sin esto el cron se rompe solo,
 en silencio, semanas después de instalarlo.
@@ -180,7 +193,7 @@ pip install -e ".[dev]"
 python -m pytest -q
 ```
 
-281 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
+290 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
 `tests/test_regresiones.py` fija los bugs ya corregidos: cada test de ahí falla
 si se revierte su arreglo.
 
@@ -197,8 +210,10 @@ sport_report/
   narrative/        llamada a Claude + verificación de cifras
   telegram/         bot, comandos, formateo, envío de texto e imagen
   grafico.py        gráfico de volumen en PNG (matplotlib)
+  respaldo.py       copia de data/ con rotación
   run_weekly.py     orquestador (lo dispara el timer)
   diagnostico.py    chequeo de salud
 deploy/             instalar.sh, unidades systemd y los cuatro runbooks
+.github/workflows/  CI: la suite en Python 3.11 y 3.12
 assets/             logo del servicio y el script que lo regenera
 ```
