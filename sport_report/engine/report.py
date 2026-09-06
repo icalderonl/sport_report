@@ -91,7 +91,10 @@ def construir(
     anclado = plan_store.para_semana(rango)
     plan = anclado.plan if anclado else None
 
-    corte = hasta if hasta is not None and hasta < rango.fin else None
+    # `<=`, no `<`: el domingo la semana TODAVIA esta en curso. Con `<` se
+    # apagaba todo el modo "semana en curso" justo el ultimo dia, y la sesion
+    # del domingo aparecia como no registrada en vez de como pendiente.
+    corte = hasta if hasta is not None and hasta <= rango.fin else None
     fin_ventana = corte or rango.fin
     dias_semana = ((corte - rango.inicio).days + 1) if corte else 7
 

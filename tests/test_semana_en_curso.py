@@ -380,6 +380,7 @@ def test_progreso_marca_los_dias_que_si_se_perdieron(tmp_path):
 def test_progreso_con_la_semana_terminada(tmp_path):
     repo = _repo_con_semana(tmp_path)
     try:
+        repo.guardar_sesion(sesion(6, distancia_km=16.0, carga=180.0))  # el largo
         texto = comandos.cmd_progreso(
             _store(tmp_path), repo=repo, hoy=DOMINGO, sincronizar=False
         )
@@ -520,3 +521,53 @@ def test_la_ultima_zona_sin_tope_no_se_imprime_como_menos_uno():
     texto = diagnostico.describir_zonas(zonas)
     assert texto == "Z1<=118 Z2<=147 Z3<=161 Z4<=176 Z5>176"
     assert "-1" not in texto
+
+
+# --------------------------------------------------------------------------
+# El domingo la semana TODAVIA no termino
+# --------------------------------------------------------------------------
+
+
+def test_el_domingo_por_la_manana_la_sesion_del_dia_sigue_pendiente(tmp_path):
+    """Regresion: con `hasta < fin` el modo 'semana en curso' se apagaba justo
+    el domingo, y el largo del dia aparecia como no registrado."""
+    repo = _repo_con_semana(tmp_path)  # martes, miercoles, jueves y viernes hechos
+    try:
+        datos = report.construir(SEMANA, repo, _store(tmp_path), hasta=DOMINGO)
+        assert datos["semana"]["en_curso"] is True
+
+        dom = [d for d in datos["adherencia"]["dias"] if d["dia"] == "D"][0]
+        assert dom["estado"] == "pendiente"
+
+        texto = formatear_progreso(datos)
+        assert "QUEDA ESTA SEMANA" in texto
+        assert "dom  long 16km" in texto
+        assert "no queda nada por hacer" not in texto
+        assert "Sin registrar: dom" not in texto
+    finally:
+        repo.cerrar()
+
+
+def test_el_domingo_ya_entrenado_si_cierra_la_semana(tmp_path):
+    repo = _repo_con_semana(tmp_path)
+    try:
+        repo.guardar_sesion(sesion(6, distancia_km=16.0, carga=180.0))  # domingo
+        datos = report.construir(SEMANA, repo, _store(tmp_path), hasta=DOMINGO)
+
+        dom = [d for d in datos["adherencia"]["dias"] if d["dia"] == "D"][0]
+        assert dom["estado"] == "cumplida"
+        assert "no queda nada por hacer" in formatear_progreso(datos)
+    finally:
+        repo.cerrar()
+
+
+def test_una_semana_ya_cerrada_no_deja_nada_pendiente(tmp_path):
+    """Preguntar por una semana pasada evalua los 7 dias, sin estado pendiente."""
+    repo = _repo_con_semana(tmp_path)
+    try:
+        datos = report.construir(SEMANA, repo, _store(tmp_path), hasta=DOMINGO + timedelta(days=3))
+        assert datos["semana"]["en_curso"] is False
+        estados = {d["estado"] for d in datos["adherencia"]["dias"]}
+        assert "pendiente" not in estados
+    finally:
+        repo.cerrar()
