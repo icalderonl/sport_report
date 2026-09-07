@@ -155,21 +155,25 @@ def _norm(valor: Any) -> str:
 # "ACWR 1.72 sobre el umbral 1.5" menciona el ratio y el umbral—, asi que cada
 # metrica declara todas las rutas que puede citar.
 
-# Cuantos caracteres se toleran entre el nombre de la metrica y su numero. Sin
-# saltos de linea: si hay que cruzar una, ya no es la misma frase.
+# Cuantos caracteres se toleran entre el nombre de la metrica y su numero.
 _VENTANA = 24
-_NUM = r"-?\d+(?:[.,]\d+)?"
+# El hueco entre ambos no puede tener digitos (asi el numero que cuenta es el
+# pegado al nombre y no uno mas lejano) ni saltos de linea, ni `.` o `;`, que
+# cierran la frase. Sin esto ultimo, "...de adherencia. La carga semanal fue
+# 558.2" hacia que 558.2 —correctamente citada como carga— se leyera como la
+# adherencia. Se dejan pasar `,` y `:`, que van dentro de la frase.
+_RE_HUECO_MALO = re.compile(r"[\d\n.;]")
 
 
-def _patron(alternativas: str) -> re.Pattern[str]:
-    return re.compile(rf"(?:{alternativas})[^\d\n]{{0,{_VENTANA}}}({_NUM})", re.I)
+def _hueco_valido(hueco: str) -> bool:
+    return len(hueco) <= _VENTANA and not _RE_HUECO_MALO.search(hueco)
 
 
-# (nombre legible, patron, rutas del JSON que esa metrica puede citar)
+# (nombre legible, como aparece en el texto, rutas del JSON que puede citar)
 METRICAS: tuple[tuple[str, re.Pattern[str], tuple[tuple[str, ...], ...]], ...] = (
     (
         "ACWR",
-        _patron(r"ACWR|ratio agudo[- :/]*cronico"),
+        re.compile(r"ACWR|ratio agudo[- :/]*cronico", re.I),
         (
             ("acwr", "ratio"),
             ("acwr", "aguda"),
@@ -180,13 +184,13 @@ METRICAS: tuple[tuple[str, re.Pattern[str], tuple[tuple[str, ...], ...]], ...] =
     ),
     (
         "Monotony",
-        _patron(r"monoton[iy]a?"),
+        re.compile(r"monoton[iy]a?", re.I),
         (("monotony", "monotony"), ("umbrales", "monotony_alta")),
     ),
-    ("Strain", _patron(r"strain"), (("monotony", "strain"),)),
+    ("Strain", re.compile(r"strain", re.I), (("monotony", "strain"),)),
     (
         "deriva cardiaca",
-        _patron(r"deriva cardiaca|deriva card[ií]aca|decoupling"),
+        re.compile(r"deriva card[ií]aca|decoupling", re.I),
         (
             ("deriva_cardiaca", "promedio_pct"),
             ("deriva_cardiaca", "maximo_pct"),
@@ -196,7 +200,7 @@ METRICAS: tuple[tuple[str, re.Pattern[str], tuple[tuple[str, ...], ...]], ...] =
     ),
     (
         "cadencia",
-        _patron(r"cadencia"),
+        re.compile(r"cadencia", re.I),
         (
             ("cadencia", "valor"),
             ("cadencia", "semana_anterior"),
@@ -206,7 +210,7 @@ METRICAS: tuple[tuple[str, re.Pattern[str], tuple[tuple[str, ...], ...]], ...] =
     ),
     (
         "adherencia",
-        _patron(r"adherencia"),
+        re.compile(r"adherencia", re.I),
         (
             ("adherencia", "pct_global"),
             ("adherencia", "sesiones_cumplidas"),
@@ -215,7 +219,7 @@ METRICAS: tuple[tuple[str, re.Pattern[str], tuple[tuple[str, ...], ...]], ...] =
     ),
     (
         "carga semanal",
-        _patron(r"carga semanal|carga de la semana"),
+        re.compile(r"carga semanal|carga de la semana", re.I),
         (("carga", "semanal"), ("monotony", "carga_semanal")),
     ),
 )
@@ -260,25 +264,57 @@ def verificar_atribucion(texto: str, datos: dict[str, Any]) -> list[str]:
     el ACWR no se pudo calcular, cualquier numero pegado a la palabra ACWR esta
     mal, venga de donde venga.
     """
+    # Posicion de cada nombre de metrica que aparezca en el texto.
+    apariciones: list[tuple[int, int, int]] = []  # (inicio, fin, indice de metrica)
+    for i, (_, patron, _) in enumerate(METRICAS):
+        apariciones.extend((m.start(), m.end(), i) for m in patron.finditer(texto))
+
     problemas: list[str] = []
-    for nombre, patron, rutas in METRICAS:
+    vistos: set[tuple[int, str]] = set()
+    for num in _RE_NUMERO.finditer(texto):
+        duenno = _metrica_mas_cercana(texto, num, apariciones)
+        if duenno is None:
+            continue
+
+        nombre, _, rutas = METRICAS[duenno]
         legitimos = _valores_legitimos(datos, rutas)
-        for bruto in patron.findall(texto):
-            n = _norm(bruto)
-            if n in legitimos:
-                continue
-            try:
-                f = float(n)
-            except ValueError:
-                continue
-            if _norm(round(f, 1)) in legitimos:
-                continue
-            esperado = _valor_en(datos, rutas[0])
-            problemas.append(
-                f"{nombre}: el texto dice {bruto} y el JSON trae "
-                f"{'null' if esperado is None else esperado}"
-            )
+        n = _norm(num.group())
+        if n in legitimos or _norm(round(float(n), 1)) in legitimos:
+            continue
+        if (duenno, n) in vistos:  # la misma confusion repetida no se reporta dos veces
+            continue
+        vistos.add((duenno, n))
+        esperado = _valor_en(datos, rutas[0])
+        problemas.append(
+            f"{nombre}: el texto dice {num.group()} y el JSON trae "
+            f"{'null' if esperado is None else esperado}"
+        )
     return problemas
+
+
+def _metrica_mas_cercana(
+    texto: str, num: re.Match[str], apariciones: list[tuple[int, int, int]]
+) -> int | None:
+    """Indice de la metrica a la que pertenece un numero, o None si no hay ninguna.
+
+    Se elige la MAS CERCANA, mire hacia donde mire. Sin esto, en "Monotony 0.97
+    y Strain 768.2" el 0.97 se le colgaba tambien a Strain, que lo tiene a tres
+    caracteres por la izquierda, y se reportaba una confusion que no existe: el
+    numero es del nombre que tiene pegado, no de cualquiera que ande cerca.
+    """
+    mejor: tuple[int, int] | None = None  # (distancia, indice)
+    for inicio, fin, indice in apariciones:
+        if fin <= num.start():  # el nombre va delante del numero
+            hueco = texto[fin : num.start()]
+        elif num.end() <= inicio:  # el numero va delante del nombre
+            hueco = texto[num.end() : inicio]
+        else:  # se solapan (un numero dentro del nombre): no aplica
+            continue
+        if not _hueco_valido(hueco):
+            continue
+        if mejor is None or len(hueco) < mejor[0]:
+            mejor = (len(hueco), indice)
+    return None if mejor is None else mejor[1]
 
 
 def verificar_cifras(texto: str, datos: dict[str, Any]) -> list[str]:

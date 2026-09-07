@@ -207,7 +207,7 @@ En un intérprete más viejo `pip` descarta en silencio las versiones que piden
 la Pi usa 1.x. Los tests pasan igual y estarías probando contra un major que
 en producción no existe. La CI corre en 3.11 y 3.12 justamente por esto.
 
-331 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
+336 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
 `tests/test_regresiones.py` fija los bugs ya corregidos: cada test de ahí falla
 si se revierte su arreglo.
 

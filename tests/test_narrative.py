@@ -306,3 +306,77 @@ def test_el_cliente_se_construye_con_reintentos_explicitos():
     # que es privado y no tiene por que seguir ahi en la proxima version. Lo
     # que importa es que este puesto a proposito y sea mas paciente que 2.
     assert claude.REINTENTOS > 2
+
+
+# --------------------------------------------------------------------------
+# Casos venidos de produccion (corrida real en la Pi, 2026-09-06)
+# --------------------------------------------------------------------------
+
+# JSON tal como lo produjo el motor esa semana.
+PRODUCCION = {
+    "volumen": {"real_km": 39.87, "planificado_km": 38.31, "pct": 104.1, "estimado_km": 5.7},
+    "carga": {"semanal": 558.2},
+    "acwr": {"ratio": 1.22, "aguda": 79.7, "cronica": 65.2},
+    "monotony": {"monotony": 0.94, "strain": 524.7, "carga_semanal": 558.2},
+    "deriva_cardiaca": {"promedio_pct": 0.7, "maximo_pct": 5.07, "n_sesiones": 4},
+    "cadencia": {"valor": 165.0, "semana_anterior": 162.2, "delta": 2.8},
+    "adherencia": {"pct_global": 75.0, "sesiones_cumplidas": 3, "sesiones_evaluables": 4},
+    "umbrales": {
+        "acwr_alto": 1.5,
+        "acwr_bajo": 0.8,
+        "monotony_alta": 2.0,
+        "decoupling_alto_pct": 5.0,
+    },
+}
+
+NARRATIVA_REAL = (
+    "Semana completada con volumen por encima del plan. Recorriste 39.87 km frente a los "
+    "38.31 km planificados, representando el 104.1% de adherencia. La carga semanal fue "
+    "558.2 unidades distribuida en cuatro sesiones, con el mayor esfuerzo concentrado el "
+    "domingo en la carrera larga de 16 km. Tu cadencia mejoro a 165.0 spm desde las 162.2 "
+    "spm de la semana anterior. El ratio ACWR se ubico en 1.22, dentro de rangos "
+    "controlados, y la monotonia fue 0.94 sin variabilidad excesiva.\n\n"
+    "Alerta: deriva cardiaca maxima 5.07% sobre el umbral 5.0% registrada en la sesion de "
+    "series del jueves."
+)
+
+
+def test_la_narrativa_real_delata_el_porcentaje_de_volumen_como_adherencia():
+    """El caso que aparecio en la primera corrida real.
+
+    El modelo escribio "el 104.1% de adherencia", pero 104.1 es el porcentaje de
+    VOLUMEN; la adherencia de esa semana fue 75.0. Todo lo demas del texto esta
+    bien citado, incluida la carga semanal 558.2 que va en la frase siguiente.
+    """
+    problemas = verificar_atribucion(NARRATIVA_REAL, PRODUCCION)
+
+    assert problemas == ["adherencia: el texto dice 104.1 y el JSON trae 75.0"]
+
+
+def test_el_numero_puede_ir_delante_del_nombre():
+    """En espanol es la forma natural para los porcentajes, y mirando solo
+    hacia adelante se escapaba entera."""
+    assert verificar_atribucion("un 104.1% de adherencia", PRODUCCION)
+    assert verificar_atribucion("un 75.0% de adherencia", PRODUCCION) == []
+
+
+def test_cada_numero_es_de_la_metrica_que_tiene_MAS_cerca():
+    """"Monotony 0.97 y Strain 768.2": el 0.97 es del Monotony que tiene pegado
+    a la izquierda, no del Strain que queda tres caracteres a la derecha."""
+    datos = dict(COMPLETO)
+
+    assert verificar_atribucion("Monotony 0.97 y Strain 768.2, ambos normales.", datos) == []
+
+
+def test_no_se_cruza_el_punto_que_separa_dos_frases():
+    """Sin esto, la carga semanal correctamente citada en la frase siguiente se
+    leia como si fuera la adherencia de la anterior."""
+    texto = "un 75.0% de adherencia. La carga semanal fue 558.2 unidades."
+
+    assert verificar_atribucion(texto, PRODUCCION) == []
+
+
+def test_un_numero_sin_metrica_cerca_no_se_comprueba():
+    """"la carrera larga de 16 km" no habla de ninguna metrica: no hay nada que
+    contrastar y inventarse una atribucion daria falsos positivos."""
+    assert verificar_atribucion("el domingo hiciste la carrera larga de 16 km", PRODUCCION) == []
