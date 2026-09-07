@@ -52,9 +52,13 @@ class Umbrales:
     acwr_dias_minimos: int = 28
     # Sesiones minimas con carga registrada en la ventana cronica.
     acwr_sesiones_minimas: int = 8
-    # Banda dentro de la cual una sesion se considera cumplida.
-    adherencia_min_pct: float = 95.0
-    adherencia_max_pct: float = 110.0
+    # Banda dentro de la cual una sesion se considera cumplida. Es ancha a
+    # proposito: una sesion con `estructura=` se compara contra la distancia
+    # dura, que no incluye la recuperacion trotada entre repeticiones, asi que
+    # lee por encima de 100% por construccion (ver adherencia.py). Con una
+    # banda estrecha toda sesion de series se contaba como incumplida.
+    adherencia_min_pct: float = 80.0
+    adherencia_max_pct: float = 120.0
 
 
 @dataclass(frozen=True)

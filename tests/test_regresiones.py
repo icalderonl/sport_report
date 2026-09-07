@@ -618,3 +618,50 @@ def test_sin_state_no_se_pide_state_a_strava():
     from sport_report.strava.auth import StravaAuth
 
     assert "state=" not in StravaAuth("123", "s").url_autorizacion("http://localhost:8721/x")
+
+
+# --------------------------------------------------------------------------
+# La banda de adherencia castigaba las series por kilometros que el plan
+# nunca declara (visto en el reporte real del 2026-08-31)
+# --------------------------------------------------------------------------
+
+
+def test_una_sesion_de_series_no_se_cuenta_incumplida():
+    """El caso que bajo la adherencia real a 75% sin que nadie fallara un dia.
+
+    Una sesion con `estructura=` se compara contra la distancia DURA, que no
+    incluye la recuperacion trotada entre repeticiones; lo real que llega de
+    Strava si la incluye. Los dos lados no miden lo mismo, asi que toda sesion
+    de series lee por encima de 100% por construccion —116.3% aqui, por 1.4km
+    de recuperacion— y con el techo en 110% se contaba como incumplimiento.
+    """
+    r = adherencia.calcular(parse_plan(PLAN_SPEC), SEMANA, [_sesion(3, distancia_km=10.0)])
+
+    jueves = next(d for d in r.dias if d.dia == "J")
+    assert (jueves.objetivo, jueves.real) == (8.6, 10.0)
+    assert jueves.pct == pytest.approx(116.3, abs=0.1)
+    assert jueves.estado == adherencia.CUMPLIDA
+
+
+def test_la_semana_real_que_salia_75_por_ciento_sale_100():
+    """Los cuatro dias de carrera se corrieron; solo el jueves caia fuera."""
+    reales = [
+        _sesion(1, distancia_km=8.0),   # M easy 8km    -> 100%
+        _sesion(3, distancia_km=10.0),  # J series 8.6km -> 116.3%
+        _sesion(4, distancia_km=10.0),  # V prog 10km    -> 100%
+        _sesion(6, distancia_km=16.1),  # D long 16km    -> 100.6%
+    ]
+
+    r = adherencia.calcular(parse_plan(PLAN_SPEC), SEMANA, reales)
+
+    assert (r.sesiones_evaluables, r.sesiones_cumplidas) == (4, 4)
+    assert r.pct_global == 100.0
+
+
+def test_la_banda_ancha_sigue_viendo_una_desviacion_de_verdad():
+    """80-120% no es lo mismo que no comprobar nada."""
+    corto = adherencia.calcular(parse_plan(SOLO_LUNES), SEMANA, [_sesion(0, distancia_km=5.5)])
+    largo = adherencia.calcular(parse_plan(SOLO_LUNES), SEMANA, [_sesion(0, distancia_km=11.0)])
+
+    assert next(d for d in corto.dias if d.dia == "L").estado == adherencia.BAJO_PLAN
+    assert next(d for d in largo.dias if d.dia == "L").estado == adherencia.SOBRE_PLAN

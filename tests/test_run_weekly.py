@@ -190,7 +190,10 @@ def test_mensaje_muestra_el_dia_a_dia(entorno):
     m = _mensaje(entorno)
     assert "[OK] mar  easy 8km -> 8km (100%)" in m
     # El jueves se compara contra los 8.6km duros, no contra los 10km reales.
-    assert "[+] jue  series 8.6km -> 10km (116.3%)" in m
+    # Los 1.4km de diferencia son la recuperacion trotada entre reps: la sesion
+    # lee 116.3% sin que el atleta se haya desviado del plan, y por eso la banda
+    # llega hasta 120% (ver test_una_sesion_de_series_no_se_cuenta_incumplida).
+    assert "[OK] jue  series 8.6km -> 10km (116.3%)" in m
     assert "[OK] dom  long 16km -> 16.1km (100.6%)" in m
     assert "[OK] mie  fuerza cumplida" in m
     assert "[.] lun  descanso" in m

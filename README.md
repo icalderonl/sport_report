@@ -142,10 +142,19 @@ prescritas por distancia con otras por tiempo. Una sesión sin pulsómetro **no
 tiene carga** (`null`, no 0) y por eso no cuenta para ACWR ni Monotony.
 
 **Las sesiones con `estructura=` se comparan contra la distancia dura derivada**,
-no contra la cantidad tecleada. Una sesión de series siempre incluye la
-recuperación trotada entre repeticiones, que el plan nunca declara: sin este
-ajuste, toda sesión con series mostraría >100% de adherencia. El volumen semanal
-sí cuenta el 100% de lo recorrido.
+no contra la cantidad tecleada: la cifra sale de los bloques y no depende de que
+el total escrito a mano esté bien. El volumen semanal sí cuenta el 100% de lo
+recorrido.
+
+**Por eso la banda de "cumplida" es 80–120% y no algo estrecho.** La distancia
+dura no incluye la recuperación trotada entre repeticiones —el plan nunca la
+declara— pero lo que llega de Strava sí, así que los dos lados de la división no
+miden lo mismo y una sesión de series lee por encima de 100% por construcción,
+por tantos kilómetros como haya trotado en las recuperaciones. Con un techo
+estrecho toda sesión de series se contaba como incumplimiento sin que el atleta
+se hubiera desviado del plan: un día de series de 8.6 km duros y 10 km reales
+salía en 116.3%. La banda ancha absorbe el sesgo; no lo corrige. Una sesión con
+recuperaciones largas puede pasarse igual de 120%.
 
 **Hay tres estados distintos, no dos.** Sesión sin registrar = 0%. Sesión
 registrada pero sin el dato que pide el plan (indoor sin GPS cuando el plan
@@ -207,7 +216,7 @@ En un intérprete más viejo `pip` descarta en silencio las versiones que piden
 la Pi usa 1.x. Los tests pasan igual y estarías probando contra un major que
 en producción no existe. La CI corre en 3.11 y 3.12 justamente por esto.
 
-336 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
+339 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
 `tests/test_regresiones.py` fija los bugs ya corregidos: cada test de ahí falla
 si se revierte su arreglo.
 

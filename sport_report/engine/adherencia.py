@@ -7,10 +7,13 @@ distinciones que la spec exige mantener separadas:
   - Sin sesion registrada  -> 0% (incumplimiento real).
   - Sesion registrada pero sin el dato en la unidad que pide el plan (indoor sin
     GPS cuando el plan pedia km) -> `null`, dato faltante. NO es 0%.
-  - Sesiones con `estructura=` -> se comparan contra la distancia dura derivada,
-    no contra el `cantidad` tecleado ni contra el total real. La recuperacion
-    trotada entre repeticiones nunca se declara en el plan; sin este ajuste toda
-    sesion con series muestra artificialmente >100%.
+  - Sesiones con `estructura=` -> el objetivo es la distancia dura derivada de
+    los bloques, no el `cantidad` tecleado a mano. Ojo con lo que eso implica:
+    la distancia dura NO incluye la recuperacion trotada entre repeticiones
+    —el plan nunca la declara— y lo real que llega de Strava SI la incluye, asi
+    que los dos lados de la division no miden lo mismo y una sesion de series
+    lee por encima de 100% por construccion. La banda de `_estado_por_pct` es
+    ancha (80-120%) para absorber ese sesgo; no lo corrige.
 
 El volumen real de la semana se calcula aparte, sumando el 100% de la distancia
 de todas las sesiones: la recuperacion sigue contando para el volumen aunque no
