@@ -31,12 +31,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from typing import Any, Iterable, Sequence
+from types import MappingProxyType
+from typing import Any, Iterable, Mapping, Sequence
 
 from ..config import UMBRALES, Umbrales
-from ..db.models import SesionReal
+from ..db.models import SesionReal, Vuelta
 from ..fechas import RangoSemana
 from ..plan.models import ORDEN_DIAS, PlanSemanal, Sesion
+from .vueltas import alinear
 
 # Estados posibles de un dia.
 CUMPLIDA = "cumplida"
@@ -64,6 +66,10 @@ class DiaAdherencia:
     estado: str
     nota: str = ""
     actividades: tuple[int, ...] = ()
+    # km trotados de recuperacion que quedaron fuera de la comparacion. Solo
+    # tiene valor cuando las vueltas permitieron separarlos; sin esto la linea
+    # del reporte diria "8.6km -> 8.6km" y se perderia que se corrieron 10.
+    recuperacion_km: float | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -77,6 +83,7 @@ class DiaAdherencia:
             "estado": self.estado,
             "nota": self.nota,
             "actividades": list(self.actividades),
+            "recuperacion_km": self.recuperacion_km,
         }
 
 
@@ -154,12 +161,55 @@ def _estado_por_pct(pct: float, umbrales: Umbrales) -> str:
     return CUMPLIDA
 
 
+def _descontar_recuperacion(
+    sesion_plan: Sesion,
+    corridas: Sequence[SesionReal],
+    real_total: float,
+    vueltas: Mapping[int, Sequence[Vuelta]],
+) -> tuple[float, str, float | None]:
+    """Deja `real` en la distancia DECLARADA, comparable contra la del plan.
+
+    El objetivo de una sesion con `estructura=` es la suma de los bloques, que
+    no incluye la recuperacion trotada entre repeticiones. Lo que trae Strava
+    como distancia de la actividad si la incluye, asi que compararlos da un
+    porcentaje alto por construccion. Con las vueltas se puede emparejar cada
+    segmento declarado con la vuelta que le corresponde y dejar fuera el resto.
+
+    Cuando no se puede emparejar se devuelve el total de siempre y la nota dice
+    por que: el numero queda inflado, pero se sabe que lo esta.
+    """
+    objetivo = sesion_plan.objetivo_km() or 0.0
+    if len(corridas) > 1:
+        motivo = (
+            f"{len(corridas)} actividades ese dia y no se sabe cual fue la sesion "
+            "de series"
+        )
+    else:
+        alineacion = alinear(
+            sesion_plan.estructura.segmentos_km(),
+            vueltas.get(corridas[0].strava_id, ()),
+        )
+        if alineacion.ok:
+            return round(alineacion.declarada_km, 2), (
+                f"{alineacion.declarada_km:g}km declarados de {real_total:g}km "
+                f"reales; los {alineacion.recuperacion_km:g}km restantes son "
+                "recuperacion entre repeticiones, que el plan no declara"
+            ), alineacion.recuperacion_km
+        motivo = alineacion.motivo
+    return real_total, (
+        f"comparado contra los {objetivo:g}km duros de `estructura=` pero sobre el "
+        "total real, que incluye la recuperacion entre repeticiones: el porcentaje "
+        f"sale alto. No se pudo separar porque {motivo}"
+    ), None
+
+
 def _evaluar_dia(
     sesion_plan: Sesion,
     fecha: date,
     reales: Sequence[SesionReal],
     fuerza_completada: bool,
     umbrales: Umbrales,
+    vueltas: Mapping[int, Sequence[Vuelta]] = MappingProxyType({}),
 ) -> DiaAdherencia:
     ids = tuple(s.strava_id for s in reales)
     base = dict(dia=sesion_plan.dia, fecha=fecha.isoformat(), tipo_plan=sesion_plan.tipo)
@@ -197,13 +247,6 @@ def _evaluar_dia(
     unidad = "km" if sesion_plan.objetivo_km() is not None else "min"
     objetivo = sesion_plan.objetivo_km() if unidad == "km" else sesion_plan.objetivo_min()
 
-    nota = ""
-    if sesion_plan.estructura is not None:
-        nota = (
-            f"comparado contra {objetivo:g}km duros de `estructura=`, no contra el "
-            "total real (incluye recuperacion entre reps)"
-        )
-
     if not corridas:
         return DiaAdherencia(
             **base,
@@ -232,6 +275,13 @@ def _evaluar_dia(
             actividades=ids,
         )
 
+    nota = ""
+    recuperacion = None
+    if sesion_plan.estructura is not None and unidad == "km":
+        real, nota, recuperacion = _descontar_recuperacion(
+            sesion_plan, corridas, real, vueltas
+        )
+
     if falta:
         nota = (nota + "; " if nota else "") + "alguna sesion del dia no aporto el dato"
 
@@ -245,6 +295,7 @@ def _evaluar_dia(
         estado=_estado_por_pct(pct, umbrales) if pct is not None else DATO_FALTANTE,
         nota=nota,
         actividades=ids,
+        recuperacion_km=recuperacion,
     )
 
 
@@ -273,8 +324,15 @@ def calcular(
     sesiones: Iterable[SesionReal],
     umbrales: Umbrales = UMBRALES,
     hasta: date | None = None,
+    vueltas: Mapping[int, Sequence[Vuelta]] | None = None,
 ) -> ResumenAdherencia:
-    """`hasta` (inclusive) evalua una semana en curso; None evalua los 7 dias."""
+    """`hasta` (inclusive) evalua una semana en curso; None evalua los 7 dias.
+
+    `vueltas` mapea strava_id -> vueltas de esa actividad. Solo se usan para las
+    sesiones con `estructura=`, para separar el trabajo declarado de la
+    recuperacion. Sin ellas el calculo es el de antes, con la nota que lo dice.
+    """
+    vueltas = MappingProxyType({}) if vueltas is None else vueltas
     por_fecha: dict[date, list[SesionReal]] = {}
     for s in sesiones:
         por_fecha.setdefault(s.fecha, []).append(s)
@@ -326,6 +384,7 @@ def calcular(
                 reales_dia,
                 plan.fuerza_completada.get(letra, False),
                 umbrales,
+                vueltas,
             )
         )
 

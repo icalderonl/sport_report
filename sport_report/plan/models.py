@@ -93,6 +93,17 @@ class Estructura:
         """
         return round(sum(b.dura() for b in self.bloques), 3)
 
+    def segmentos_km(self) -> tuple[float, ...]:
+        """Los bloques desplegados en segmentos sueltos, en orden.
+
+        `2km+3x1000m+2km` -> (2.0, 1.0, 1.0, 1.0, 2.0). Es lo que se alinea
+        contra las vueltas reales de Strava: cada segmento declarado deberia
+        corresponder a una vuelta, y lo que sobre es recuperacion.
+        """
+        return tuple(
+            b.distancia_km for b in self.bloques for _ in range(b.reps)
+        )
+
     def to_json(self) -> dict[str, Any]:
         return {
             "crudo": self.crudo,

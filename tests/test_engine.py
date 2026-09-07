@@ -6,7 +6,7 @@ from datetime import date, timedelta
 import pytest
 
 from sport_report.config import Umbrales
-from sport_report.db.models import SesionReal
+from sport_report.db.models import SesionReal, Vuelta
 from sport_report.db.repo import Repo
 from sport_report.engine import acwr, adherencia, foster, report
 from sport_report.fechas import semana_de
@@ -143,13 +143,29 @@ def sesion(dia_offset: int, **kw) -> SesionReal:
     return SesionReal(**base)
 
 
-def _adh(sesiones, plan=None, fuerza=None):
+# El jueves del PLAN_SPEC tal como lo marcaria el reloj: cada segmento
+# declarado en su vuelta y las recuperaciones sueltas entre medio. Suman los
+# 10.0km reales, de los cuales 8.6 son los declarados en `estructura=`.
+VUELTAS_SERIES = [
+    Vuelta(1003, 1, 2.0, 800),                                    # calentamiento
+    Vuelta(1003, 2, 1.0, 240), Vuelta(1003, 3, 0.2, 90),
+    Vuelta(1003, 4, 1.0, 242), Vuelta(1003, 5, 0.2, 92),
+    Vuelta(1003, 6, 1.0, 238), Vuelta(1003, 7, 0.4, 150),  # trote largo, mide igual que una rep
+    Vuelta(1003, 8, 0.4, 84), Vuelta(1003, 9, 0.2, 78),
+    Vuelta(1003, 10, 0.4, 85), Vuelta(1003, 11, 0.2, 80),
+    Vuelta(1003, 12, 0.4, 83), Vuelta(1003, 13, 0.2, 79),
+    Vuelta(1003, 14, 0.4, 82),
+    Vuelta(1003, 15, 2.0, 820),                                   # enfriamiento
+]
+
+
+def _adh(sesiones, plan=None, fuerza=None, vueltas=None):
     p = plan or parse_plan(PLAN_SPEC)
     if fuerza:
         from dataclasses import replace
 
         p = replace(p, fuerza_completada=fuerza)
-    return adherencia.calcular(p, SEMANA, sesiones)
+    return adherencia.calcular(p, SEMANA, sesiones, vueltas=vueltas)
 
 
 def test_dia_cumplido():
@@ -175,14 +191,30 @@ def test_sesion_sin_el_dato_pedido_no_es_cero():
     assert r.dias_sin_dato == 1
 
 
-def test_series_se_comparan_contra_la_distancia_dura():
-    """Caso real de la spec: 8.6km duros, 10.0km reales por la recuperacion."""
+def test_series_sin_vueltas_se_comparan_contra_el_total_y_la_nota_lo_dice():
+    """Caso real de la spec: 8.6km duros, 10.0km reales por la recuperacion.
+
+    Sin vueltas no hay forma de separar la recuperacion, asi que se compara
+    contra el total y el porcentaje sale alto. Lo que no se puede es callarlo.
+    """
     r = _adh([sesion(3, distancia_km=10.0)])
     d = r.dias[3]
     assert d.objetivo == 8.6
     assert d.real == 10.0
     assert d.pct == pytest.approx(116.3, abs=0.1)
-    assert "no contra el total real" in d.nota
+    assert "el porcentaje sale alto" in d.nota
+    assert "no trae vueltas marcadas" in d.nota
+
+
+def test_series_con_vueltas_se_comparan_declarado_contra_declarado():
+    """Con las vueltas del reloj se descuenta la recuperacion y sale 100%."""
+    r = _adh([sesion(3, distancia_km=10.0)], vueltas={1003: VUELTAS_SERIES})
+    d = r.dias[3]
+    assert d.objetivo == 8.6
+    assert d.real == 8.6
+    assert d.pct == pytest.approx(100.0, abs=0.1)
+    assert d.estado == adherencia.CUMPLIDA
+    assert "1.4km restantes son recuperacion" in d.nota
 
 
 def test_el_volumen_real_si_cuenta_la_recuperacion():

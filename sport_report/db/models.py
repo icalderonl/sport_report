@@ -33,6 +33,9 @@ class SesionReal:
     # actividad no tuviera HR. Sin esto una corrida sin pulsometro (carga NULL)
     # se vuelve a bajar en cada sincronizacion y gasta cuota para siempre.
     streams_procesados: bool = False
+    # Idem para las vueltas. Una actividad puede no traer ninguna (registro
+    # manual) y eso es una respuesta valida, no un motivo para reintentar.
+    vueltas_procesadas: bool = False
 
     @property
     def fecha(self) -> date:
@@ -55,6 +58,31 @@ class SesionReal:
     @property
     def duracion_min(self) -> float | None:
         return self.duracion_mov_s / 60 if self.duracion_mov_s else None
+
+    def to_json(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class Vuelta:
+    """Una vuelta (`lap`) de una actividad, tal como la marco el reloj.
+
+    Es el unico dato que permite separar el trabajo declarado en el plan de la
+    recuperacion trotada entre repeticiones, que el plan nunca escribe. Sin
+    vueltas solo se conoce el total de la actividad, y una sesion de series
+    siempre lee por encima de lo prescrito.
+    """
+
+    strava_id: int
+    indice: int  # lap_index de Strava, 1-based
+    distancia_km: float
+    duracion_mov_s: int
+
+    @property
+    def ritmo_s_km(self) -> float | None:
+        if not self.distancia_km or not self.duracion_mov_s:
+            return None
+        return self.duracion_mov_s / self.distancia_km
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)

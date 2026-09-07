@@ -183,6 +183,19 @@ class StravaClient:
             return {}
         return {k: v.get("data", []) for k, v in crudo.items() if isinstance(v, dict)}
 
+    def vueltas(self, actividad_id: int) -> list[dict[str, Any]]:
+        """Vueltas (`laps`) de una actividad. [] si no tiene.
+
+        Como con los streams, no tener vueltas es un caso normal —una subida
+        manual no las trae— y no un error: quien llama decide que hacer.
+        """
+        try:
+            crudo = self._get(f"/activities/{actividad_id}/laps")
+        except SinPermiso:
+            log.info("actividad %s sin vueltas disponibles", actividad_id)
+            return []
+        return crudo if isinstance(crudo, list) else []
+
     def zonas_hr(self) -> list[dict[str, int]] | None:
         """Zonas de HR del atleta, o None si no las tiene configuradas.
 

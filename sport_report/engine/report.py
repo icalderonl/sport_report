@@ -123,7 +123,12 @@ def construir(
     r_foster = m_foster.calcular(
         carga_por_dia, inicio=rango.inicio, umbrales=umbrales, dias=dias_semana
     )
-    r_adh = m_adh.calcular(plan, rango, sesiones, umbrales=umbrales, hasta=corte)
+    # Las vueltas solo hacen falta para las sesiones con `estructura=`, pero
+    # traerlas de una es una consulta y no N: el motor decide cuales usa.
+    r_adh = m_adh.calcular(
+        plan, rango, sesiones, umbrales=umbrales, hasta=corte,
+        vueltas=repo.vueltas_entre(rango.inicio, fin_ventana),
+    )
     serie = repo.volumen_semanal(fin_ventana, config.SEMANAS_GRAFICO)
 
     impreciso = any(s.carga_impreciso for s in sesiones)

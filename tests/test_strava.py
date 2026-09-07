@@ -279,6 +279,26 @@ def test_actividad_sin_streams_devuelve_vacio_no_error():
     assert cli.streams(1) == {}
 
 
+def test_vueltas_llegan_como_lista():
+    cuerpo = [
+        {"lap_index": 1, "distance": 2000.0, "moving_time": 800},
+        {"lap_index": 2, "distance": 1000.0, "moving_time": 240},
+    ]
+    cli, _, _ = _cliente(lambda r: httpx.Response(200, json=cuerpo))
+    assert cli.vueltas(1) == cuerpo
+
+
+def test_actividad_sin_vueltas_devuelve_lista_vacia_no_error():
+    """Una subida manual no tiene vueltas: es un caso normal, no un fallo."""
+    cli, _, _ = _cliente(lambda r: httpx.Response(404, text="Record Not Found"))
+    assert cli.vueltas(1) == []
+
+
+def test_vueltas_ignora_una_respuesta_que_no_es_lista():
+    cli, _, _ = _cliente(lambda r: httpx.Response(200, json={"error": "?"}))
+    assert cli.vueltas(1) == []
+
+
 def test_zonas_hr_ok():
     cuerpo = {
         "heart_rate": {

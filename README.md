@@ -146,15 +146,38 @@ no contra la cantidad tecleada: la cifra sale de los bloques y no depende de que
 el total escrito a mano esté bien. El volumen semanal sí cuenta el 100% de lo
 recorrido.
 
-**Por eso la banda de "cumplida" es 80–120% y no algo estrecho.** La distancia
+**Las vueltas del reloj son las que hacen comparable esa cifra.** La distancia
 dura no incluye la recuperación trotada entre repeticiones —el plan nunca la
-declara— pero lo que llega de Strava sí, así que los dos lados de la división no
-miden lo mismo y una sesión de series lee por encima de 100% por construcción,
-por tantos kilómetros como haya trotado en las recuperaciones. Con un techo
-estrecho toda sesión de series se contaba como incumplimiento sin que el atleta
-se hubiera desviado del plan: un día de series de 8.6 km duros y 10 km reales
-salía en 116.3%. La banda ancha absorbe el sesgo; no lo corrige. Una sesión con
-recuperaciones largas puede pasarse igual de 120%.
+declara— pero la distancia de la actividad sí, así que los dos lados de la
+división no medían lo mismo: un día de `2km+3x1000m+4x400m+2km` con 8.6 km
+declarados y 10 km reales salía en 116.3% sin que el atleta se hubiera desviado
+del plan. `engine/vueltas.py` empareja cada segmento declarado con la vuelta que
+le corresponde y deja fuera el resto, así que se compara declarado contra
+declarado.
+
+El emparejamiento va en orden y por distancia, con la tolerancia que exige el
+GPS. La distancia sola no basta: en un `4x400m` con 400 m de trote entre
+repeticiones las ocho vueltas miden lo mismo. Lo que las separa es el ritmo, así
+que entre todas las alineaciones válidas se elige la de **menor tiempo total** —
+de las vueltas que podrían ser el trabajo declarado, el trabajo declarado es la
+que se corrió rápido. Se resuelve con programación dinámica, no con la primera
+coincidencia, porque a veces conviene descartar un emparejamiento temprano para
+habilitar uno mejor más adelante.
+
+**Si no se puede emparejar, no se inventa el número.** Sin vueltas marcadas, con
+menos vueltas que segmentos, o si alguna no encuentra pareja, se vuelve a
+comparar contra el total y la nota del día dice por qué el porcentaje sale alto.
+La línea del reporte muestra los kilómetros que quedaron fuera (`+1.4km rec`)
+para que el día a día no parezca contradecir el volumen semanal, que sí los
+cuenta.
+
+La banda de "cumplida" es **80–120%**, ancha a propósito: es el colchón para los
+días en que el emparejamiento no se puede hacer.
+
+Las vueltas se piden a Strava una sola vez por actividad y se guardan en la tabla
+`vueltas`; una actividad sin ellas queda marcada igual para no volver a
+preguntar. Es una llamada más por corrida ingerida, y la primera sincronización
+después de actualizar recorre el histórico una vez.
 
 **Hay tres estados distintos, no dos.** Sesión sin registrar = 0%. Sesión
 registrada pero sin el dato que pide el plan (indoor sin GPS cuando el plan
@@ -216,7 +239,7 @@ En un intérprete más viejo `pip` descarta en silencio las versiones que piden
 la Pi usa 1.x. Los tests pasan igual y estarías probando contra un major que
 en producción no existe. La CI corre en 3.11 y 3.12 justamente por esto.
 
-339 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
+370 tests, ninguno toca la red: Strava, Telegram y Claude se prueban con dobles.
 `tests/test_regresiones.py` fija los bugs ya corregidos: cada test de ahí falla
 si se revierte su arreglo.
 
@@ -229,7 +252,7 @@ sport_report/
   plan/             gramática de /setplan, distancia dura, persistencia
   strava/           OAuth con rotación, cliente, métricas, ingesta, backfill
   db/               esquema y repositorio SQLite
-  engine/           ACWR, Foster, adherencia -> JSON único
+  engine/           ACWR, Foster, adherencia, vueltas -> JSON único
   narrative/        llamada a Claude + verificación de cifras
   telegram/         bot, comandos, formateo, envío de texto e imagen
   grafico.py        gráfico de volumen en PNG (matplotlib)

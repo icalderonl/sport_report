@@ -30,6 +30,7 @@ class ResumenIngesta:
     otras: int = 0
     sin_streams: int = 0
     sin_hr: int = 0
+    sin_vueltas: int = 0
     reutilizadas: int = 0
     zonas_origen: str = "desconocido"
     fuerza_marcada: list[str] = field(default_factory=list)
@@ -47,6 +48,7 @@ class ResumenIngesta:
             "otras": self.otras,
             "sin_streams": self.sin_streams,
             "sin_hr": self.sin_hr,
+            "sin_vueltas": self.sin_vueltas,
             "reutilizadas": self.reutilizadas,
             "zonas_origen": self.zonas_origen,
             "carga_imprecisa": self.carga_imprecisa,
@@ -114,6 +116,7 @@ class Ingesta:
         streams: dict[str, list[Any]] | None,
         zonas: list[dict[str, int]] | None,
         streams_procesados: bool = False,
+        vueltas_procesadas: bool = False,
     ) -> SesionReal:
         local = _a_local(act["start_date"])
         tipo = act.get("type") or act.get("sport_type") or "Desconocido"
@@ -147,6 +150,7 @@ class Ingesta:
             carga=carga.carga,
             carga_impreciso=carga.impreciso,
             streams_procesados=streams_procesados,
+            vueltas_procesadas=vueltas_procesadas,
         )
 
     # -- sincronizacion --------------------------------------------------
@@ -184,15 +188,31 @@ class Ingesta:
             # sin streams es una respuesta valida (registro manual, subida sin
             # dispositivo); un fallo de red no lo es y hay que reintentarlo.
             streams_ok = False
+            vueltas_ok = False
             if es_run:
                 previa = self.repo.sesion(int(act["id"]))
-                if previa is not None and previa.streams_procesados and not forzar:
+                nueva = previa is None or forzar
+                if not nueva and previa.streams_procesados and previa.vueltas_procesadas:
                     # Ya procesada: no gastar cuota en volver a bajar el stream.
                     # Se mira `streams_procesados` y no `carga`: una corrida sin
                     # pulsometro nunca va a tener carga y se re-bajaba siempre.
                     resumen.reutilizadas += 1
                     self._marcar_si_fuerza(act, es_fuerza, resumen)
                     continue
+
+                if nueva or not previa.vueltas_procesadas:
+                    vueltas_ok = self._traer_vueltas(int(act["id"]), resumen)
+
+                if not nueva and previa.streams_procesados:
+                    # A esta fila solo le faltaban las vueltas, que ya se
+                    # guardaron. Re-normalizarla obligaria a bajar de nuevo el
+                    # stream para no perder la carga, que es la llamada cara que
+                    # se esta evitando; basta con mover la bandera.
+                    self.repo.marcar_vueltas_procesadas(int(act["id"]), vueltas_ok)
+                    resumen.reutilizadas += 1
+                    self._marcar_si_fuerza(act, es_fuerza, resumen)
+                    continue
+
                 try:
                     streams = self.cliente.streams(int(act["id"]))
                     streams_ok = True
@@ -203,7 +223,11 @@ class Ingesta:
                 elif "heartrate" not in streams:
                     resumen.sin_hr += 1
 
-            sesion = self.normalizar(act, streams, zonas, streams_procesados=streams_ok)
+            sesion = self.normalizar(
+                act, streams, zonas,
+                streams_procesados=streams_ok,
+                vueltas_procesadas=vueltas_ok,
+            )
             self.repo.guardar_sesion(sesion)
             if es_run and sesion.carga is None:
                 resumen.avisos.append(
@@ -214,6 +238,24 @@ class Ingesta:
 
         log.info("ingesta %s..%s: %s", desde, hasta, resumen.to_json())
         return resumen
+
+    def _traer_vueltas(self, actividad_id: int, resumen: ResumenIngesta) -> bool:
+        """Baja y guarda las vueltas. Devuelve si Strava respondio.
+
+        Que no haya vueltas es una respuesta valida y se guarda como tal (lista
+        vacia, bandera en 1) para no volver a pedirlas cada semana. Un fallo de
+        red no lo es: deja la bandera en 0 y se reintenta en la proxima corrida.
+        """
+        try:
+            crudas = self.cliente.vueltas(actividad_id)
+        except StravaError as exc:
+            log.warning("vueltas de %s fallaron: %s", actividad_id, exc)
+            return False
+        vueltas = metricas.normalizar_vueltas(actividad_id, crudas)
+        self.repo.guardar_vueltas(actividad_id, vueltas)
+        if not vueltas:
+            resumen.sin_vueltas += 1
+        return True
 
     def _marcar_si_fuerza(
         self, act: dict[str, Any], es_fuerza: bool, resumen: ResumenIngesta

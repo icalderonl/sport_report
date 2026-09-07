@@ -14,7 +14,7 @@ from sport_report.plan.store import PlanStore
 from sport_report.run_weekly import ERROR, OK, PARCIAL, ejecutar
 from sport_report.strava.errors import StravaError
 from sport_report.telegram.formato import formatear_reporte
-from tests.test_engine import sesion
+from tests.test_engine import VUELTAS_SERIES, sesion
 from tests.test_grammar import PLAN_SPEC
 from tests.test_narrative import ClienteFalso, Respuesta
 
@@ -189,14 +189,28 @@ def test_mensaje_marca_lo_no_confiable(entorno):
 def test_mensaje_muestra_el_dia_a_dia(entorno):
     m = _mensaje(entorno)
     assert "[OK] mar  easy 8km -> 8km (100%)" in m
-    # El jueves se compara contra los 8.6km duros, no contra los 10km reales.
-    # Los 1.4km de diferencia son la recuperacion trotada entre reps: la sesion
-    # lee 116.3% sin que el atleta se haya desviado del plan, y por eso la banda
-    # llega hasta 120% (ver test_una_sesion_de_series_no_se_cuenta_incumplida).
+    # Sin vueltas guardadas el jueves se compara contra los 10km reales, que
+    # incluyen la recuperacion trotada: lee 116.3% sin que el atleta se haya
+    # desviado. Por eso la banda llega hasta 120%.
     assert "[OK] jue  series 8.6km -> 10km (116.3%)" in m
     assert "[OK] dom  long 16km -> 16.1km (100.6%)" in m
     assert "[OK] mie  fuerza cumplida" in m
     assert "[.] lun  descanso" in m
+
+
+def test_con_vueltas_el_jueves_se_compara_declarado_contra_declarado(entorno):
+    """El circulo completo: vueltas en la base -> reporte con la cifra limpia.
+
+    La linea sigue diciendo los km trotados de recuperacion; sin eso el dia a
+    dia parece contradecir el volumen de la semana, que si los cuenta.
+    """
+    repo, _ = entorno
+    repo.guardar_vueltas(1003, VUELTAS_SERIES)
+
+    m = _mensaje(entorno)
+
+    assert "[OK] jue  series 8.6km -> 8.6km (100%) +1.4km rec" in m
+    assert "43.7 km reales" in m  # el volumen sigue contando los 10km del jueves
 
 
 def test_mensaje_cabe_en_un_solo_envio(entorno):

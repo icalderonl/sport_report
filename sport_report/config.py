@@ -53,10 +53,10 @@ class Umbrales:
     # Sesiones minimas con carga registrada en la ventana cronica.
     acwr_sesiones_minimas: int = 8
     # Banda dentro de la cual una sesion se considera cumplida. Es ancha a
-    # proposito: una sesion con `estructura=` se compara contra la distancia
-    # dura, que no incluye la recuperacion trotada entre repeticiones, asi que
-    # lee por encima de 100% por construccion (ver adherencia.py). Con una
-    # banda estrecha toda sesion de series se contaba como incumplida.
+    # proposito: cuando no hay vueltas con que separar la recuperacion trotada,
+    # una sesion con `estructura=` se compara contra el total y lee por encima
+    # de 100% sin que el atleta se haya desviado (ver engine/vueltas.py). Con
+    # una banda estrecha esos dias se contaban como incumplimiento.
     adherencia_min_pct: float = 80.0
     adherencia_max_pct: float = 120.0
 

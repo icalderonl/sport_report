@@ -101,7 +101,12 @@ def _linea_dia(d: dict) -> str:
     if d["real"] is None:
         real = "sin dato" if d["estado"] == "dato_faltante" else "no registrada"
         return f"[{marca}] {dia}  {tipo} {obj} -> {real}"
-    return f"[{marca}] {dia}  {tipo} {obj} -> {_num(d['real'], u)} ({_num(d['pct'], '%')})"
+    linea = f"[{marca}] {dia}  {tipo} {obj} -> {_num(d['real'], u)} ({_num(d['pct'], '%')})"
+    # La comparacion de una sesion con `estructura=` deja fuera la recuperacion
+    # trotada. Sin decirlo, la linea parece contradecir el volumen de la semana.
+    if d.get("recuperacion_km"):
+        linea += f" +{_num(d['recuperacion_km'], 'km')} rec"
+    return linea
 
 
 def formatear_reporte(datos: dict, narrativa: str | None = None) -> str:

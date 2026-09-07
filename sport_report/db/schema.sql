@@ -22,10 +22,28 @@ CREATE TABLE IF NOT EXISTS sesiones (
     -- 1 si ya se pidieron los streams y Strava respondio (aunque no hubiera
     -- HR). Evita re-bajar para siempre los streams de una corrida sin carga.
     streams_procesados INTEGER NOT NULL DEFAULT 0,
+    -- 1 si ya se pidieron las vueltas y Strava respondio, aunque la actividad
+    -- no tuviera ninguna. Mismo motivo que streams_procesados.
+    vueltas_procesadas INTEGER NOT NULL DEFAULT 0,
     ingerido_en     TEXT    NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_sesiones_fecha ON sesiones(fecha_local);
+
+-- Vueltas (`laps`) de una actividad, tal como las marco el reloj. Son lo que
+-- permite separar el trabajo declarado en el plan de la recuperacion trotada
+-- entre repeticiones (ver engine/vueltas.py).
+--
+-- Sin FOREIGN KEY a proposito: `guardar_sesion` usa INSERT OR REPLACE, que
+-- borra la fila y la reinserta, y con ON DELETE CASCADE cada reingesta se
+-- llevaria las vueltas por delante.
+CREATE TABLE IF NOT EXISTS vueltas (
+    strava_id      INTEGER NOT NULL,
+    indice         INTEGER NOT NULL,   -- lap_index de Strava, 1-based
+    distancia_km   REAL    NOT NULL,
+    duracion_mov_s INTEGER NOT NULL,
+    PRIMARY KEY (strava_id, indice)
+);
 
 -- Zonas de HR del atleta, cacheadas. origen = 'strava' | 'fallback'
 CREATE TABLE IF NOT EXISTS zonas_hr (

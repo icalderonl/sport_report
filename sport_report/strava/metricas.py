@@ -188,3 +188,37 @@ def distancia_km(actividad: dict[str, Any]) -> float | None:
     except (TypeError, ValueError):
         return None
     return round(metros / 1000.0, 3) if metros > 0 else None
+
+
+def normalizar_vueltas(strava_id: int, crudas: Sequence[Any]) -> list["Vuelta"]:
+    """Vueltas de Strava -> modelo propio, descartando las inservibles.
+
+    Una vuelta sin distancia o sin tiempo no aporta nada a la alineacion contra
+    el plan y solo puede estorbar, asi que se cae. El `indice` se toma de
+    `lap_index` cuando viene: es lo que identifica la vuelta en Strava y permite
+    decir en el reporte cuales se emparejaron.
+    """
+    from ..db.models import Vuelta
+
+    salida: list[Vuelta] = []
+    for i, v in enumerate(crudas):
+        if not isinstance(v, dict):
+            continue
+        try:
+            metros = float(v.get("distance") or 0.0)
+            segundos = int(v.get("moving_time") or v.get("elapsed_time") or 0)
+            indice = int(v.get("lap_index") or (i + 1))
+        except (TypeError, ValueError):
+            continue
+        if metros <= 0 or segundos <= 0:
+            continue
+        salida.append(
+            Vuelta(
+                strava_id=strava_id,
+                indice=indice,
+                distancia_km=round(metros / 1000.0, 3),
+                duracion_mov_s=segundos,
+            )
+        )
+    salida.sort(key=lambda v: v.indice)
+    return salida

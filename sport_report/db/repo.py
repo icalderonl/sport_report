@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .. import config
-from .models import SesionReal
+from .models import SesionReal, Vuelta
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +33,7 @@ _CAMPOS = (
     "carga",
     "carga_impreciso",
     "streams_procesados",
+    "vueltas_procesadas",
 )
 
 # Columnas agregadas despues de la primera version del esquema. `CREATE TABLE
@@ -46,6 +47,13 @@ _MIGRACIONES = (
         # Una fila con carga ya paso por el stream: no hay que volver a bajarla.
         # Las que no la tienen se re-piden una vez y quedan marcadas.
         "UPDATE sesiones SET streams_procesados = 1 WHERE carga IS NOT NULL",
+    ),
+    (
+        "vueltas_procesadas",
+        "INTEGER NOT NULL DEFAULT 0",
+        # Sin relleno: ninguna fila vieja tiene vueltas guardadas todavia, asi
+        # que todas hay que pedirlas una vez.
+        "",
     ),
 )
 
@@ -118,7 +126,7 @@ class Repo:
 
     def _fila_a_sesion(self, f: sqlite3.Row) -> SesionReal:
         d = {c: f[c] for c in _CAMPOS}
-        for bandera in ("es_fuerza", "carga_impreciso", "streams_procesados"):
+        for bandera in ("es_fuerza", "carga_impreciso", "streams_procesados", "vueltas_procesadas"):
             d[bandera] = bool(d[bandera])
         return SesionReal(**d)
 
@@ -197,6 +205,75 @@ class Repo:
     def primera_fecha(self) -> date | None:
         f = self.con.execute("SELECT MIN(fecha_local) AS m FROM sesiones").fetchone()
         return date.fromisoformat(f["m"]) if f and f["m"] else None
+
+    # -- vueltas ---------------------------------------------------------
+
+    def guardar_vueltas(self, strava_id: int, vueltas: Iterable[Vuelta]) -> int:
+        """Reemplaza las vueltas de una actividad. Idempotente.
+
+        Se borran primero las que hubiera: si Strava devuelve menos vueltas que
+        antes (el atleta edito la actividad) dejar las viejas mezclaria dos
+        versiones de la misma sesion.
+        """
+        filas = [(v.strava_id, v.indice, v.distancia_km, v.duracion_mov_s) for v in vueltas]
+        self.con.execute("DELETE FROM vueltas WHERE strava_id = ?", (strava_id,))
+        self.con.executemany(
+            "INSERT INTO vueltas (strava_id, indice, distancia_km, duracion_mov_s) "
+            "VALUES (?, ?, ?, ?)",
+            filas,
+        )
+        self.con.commit()
+        return len(filas)
+
+    def marcar_vueltas_procesadas(self, strava_id: int, valor: bool = True) -> None:
+        """Marca la bandera sin volver a escribir la sesion entera.
+
+        Cuando a una fila ya ingerida solo le faltaban las vueltas no hay que
+        re-normalizarla: hacerlo exigiria volver a bajar los streams para no
+        perder la carga, que es justo la llamada cara que se quiere evitar.
+        """
+        self.con.execute(
+            "UPDATE sesiones SET vueltas_procesadas = ? WHERE strava_id = ?",
+            (int(valor), strava_id),
+        )
+        self.con.commit()
+
+    def vueltas(self, strava_id: int) -> list[Vuelta]:
+        filas = self.con.execute(
+            "SELECT * FROM vueltas WHERE strava_id = ? ORDER BY indice", (strava_id,)
+        ).fetchall()
+        return [
+            Vuelta(
+                strava_id=int(f["strava_id"]),
+                indice=int(f["indice"]),
+                distancia_km=float(f["distancia_km"]),
+                duracion_mov_s=int(f["duracion_mov_s"]),
+            )
+            for f in filas
+        ]
+
+    def vueltas_entre(self, desde: date, hasta: date) -> dict[int, list[Vuelta]]:
+        """Vueltas de todas las sesiones de la ventana, agrupadas por actividad.
+
+        Una sola consulta: el motor de adherencia las necesita todas de golpe y
+        preguntar sesion por sesion son N viajes a la base por reporte.
+        """
+        filas = self.con.execute(
+            "SELECT v.* FROM vueltas v JOIN sesiones s ON s.strava_id = v.strava_id "
+            "WHERE s.fecha_local BETWEEN ? AND ? ORDER BY v.strava_id, v.indice",
+            (desde.isoformat(), hasta.isoformat()),
+        ).fetchall()
+        salida: dict[int, list[Vuelta]] = {}
+        for f in filas:
+            salida.setdefault(int(f["strava_id"]), []).append(
+                Vuelta(
+                    strava_id=int(f["strava_id"]),
+                    indice=int(f["indice"]),
+                    distancia_km=float(f["distancia_km"]),
+                    duracion_mov_s=int(f["duracion_mov_s"]),
+                )
+            )
+        return salida
 
     # -- zonas -----------------------------------------------------------
 
