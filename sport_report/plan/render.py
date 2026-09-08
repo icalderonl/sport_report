@@ -32,37 +32,41 @@ def avisos(plan: PlanSemanal) -> list[str]:
     """Advertencias no bloqueantes detectadas al cargar el plan."""
     out: list[str] = []
     for d in plan.dias_sin_estimar():
-        s = plan.sesiones[d]
-        out.append(
-            f"{s.nombre_dia}: prescrito en minutos y sin ritmo con que estimar km. "
-            "Queda fuera del volumen planificado; agrega un ritmo (@5:30) si quieres "
-            "que cuente."
-        )
-    for d in ORDEN_DIAS:
-        s = plan.sesiones[d]
-        if s.estructura is None or s.unidad != "km" or s.cantidad is None:
-            continue
-        dura = s.estructura.distancia_dura_km()
-        if dura <= 0:
-            continue
-        if abs(dura - s.cantidad) / s.cantidad > TOLERANCIA_CANTIDAD:
+        for s in plan.dia(d):
+            if s.objetivo_min() is None or s.objetivo_km_estimado() is not None:
+                continue
             out.append(
-                f"{s.nombre_dia}: tecleaste {s.cantidad:g}km pero `estructura=` suma "
-                f"{dura:g}km duros. Se usara {dura:g}km para la adherencia."
+                f"{s.nombre_dia}: prescrito en minutos y sin ritmo con que estimar km. "
+                "Queda fuera del volumen planificado; agrega un ritmo (@5:30) si quieres "
+                "que cuente."
             )
+    for d in ORDEN_DIAS:
+        for s in plan.dia(d):
+            if s.estructura is None or s.unidad != "km" or s.cantidad is None:
+                continue
+            dura = s.estructura.distancia_dura_km()
+            if dura <= 0:
+                continue
+            if abs(dura - s.cantidad) / s.cantidad > TOLERANCIA_CANTIDAD:
+                out.append(
+                    f"{s.nombre_dia}: tecleaste {s.cantidad:g}km pero `estructura=` suma "
+                    f"{dura:g}km duros. Se usara {dura:g}km para la adherencia."
+                )
     return out
 
 
 def resumen(plan: PlanSemanal, con_fuerza: bool = False) -> str:
     lineas = [f"Semana {plan.semana}"]
     for d in ORDEN_DIAS:
-        s = plan.sesiones[d]
-        texto = describir_sesion(s)
-        if con_fuerza and s.es_fuerza:
-            estado = "cumplida" if plan.fuerza_completada.get(d) else "pendiente"
-            marca = "OK" if plan.fuerza_completada.get(d) else "..."
-            texto = f"{texto}  [{marca} {estado}]"
-        lineas.append(f"{d}  {texto}")
+        # Una linea por sesion: con dos entrenamientos el mismo dia, juntarlos
+        # en una sola linea escondia uno de los dos.
+        for i, s in enumerate(plan.dia(d)):
+            texto = describir_sesion(s)
+            if con_fuerza and s.es_fuerza:
+                estado = "cumplida" if plan.fuerza_completada.get(d) else "pendiente"
+                marca = "OK" if plan.fuerza_completada.get(d) else "..."
+                texto = f"{texto}  [{marca} {estado}]"
+            lineas.append(f"{d if i == 0 else ' '}  {texto}")
     lineas.append("")
 
     total = plan.volumen_planificado_km()

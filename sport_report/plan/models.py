@@ -207,14 +207,54 @@ class Sesion:
 
 @dataclass(frozen=True)
 class PlanSemanal:
+    """El plan de una semana. Cada dia lleva UNA O MAS sesiones.
+
+    Un dia con dos entrenamientos (una corrida y fuerza, o dos corridas) es
+    normal, asi que `sesiones` mapea la letra del dia a una tupla, no a una
+    sesion sola. Los 7 dias existen siempre, con al menos una linea cada uno:
+    no hay descanso implicito, se declara con `rest`.
+    """
+
     semana: int
-    sesiones: dict[str, Sesion]
+    sesiones: dict[str, tuple[Sesion, ...]]
     crudo: str = ""
     # Estado de cumplimiento de fuerza por dia; lo mutan la ingesta y /fuerza.
+    # Es un bool por dia y no por sesion porque la gramatica admite como maximo
+    # una fuerza diaria: mas de una no aportaria nada al seguimiento.
     fuerza_completada: dict[str, bool] = field(default_factory=dict)
 
+    # -- accesores -------------------------------------------------------
+
+    def dia(self, letra: str) -> tuple[Sesion, ...]:
+        """Todas las sesiones de ese dia, en el orden en que se escribieron."""
+        return self.sesiones.get(letra.upper(), ())
+
+    def corridas(self, letra: str) -> tuple[Sesion, ...]:
+        """Solo las sesiones de correr: ni `rest` ni `fuerza`.
+
+        Son las unicas que se comparan en km o minutos contra lo real. La
+        palabra es `corrida` y no `carrera` a proposito: `carrera` en este
+        proyecto es la competencia objetivo (ver plan/carrera.py).
+        """
+        return tuple(s for s in self.dia(letra) if not s.es_fuerza and s.tipo != "rest")
+
+    def fuerza_de(self, letra: str) -> Sesion | None:
+        return next((s for s in self.dia(letra) if s.es_fuerza), None)
+
+    def es_descanso(self, letra: str) -> bool:
+        """True si el dia solo declara descanso.
+
+        `rest` es exclusivo en la gramatica, asi que basta con mirar si hay
+        alguna sesion que no sea descanso.
+        """
+        sesiones = self.dia(letra)
+        return bool(sesiones) and all(s.tipo == "rest" for s in sesiones)
+
+    def todas(self) -> tuple[Sesion, ...]:
+        return tuple(s for d in ORDEN_DIAS for s in self.dia(d))
+
     def dias_fuerza(self) -> tuple[str, ...]:
-        return tuple(d for d in ORDEN_DIAS if self.sesiones[d].es_fuerza)
+        return tuple(d for d in ORDEN_DIAS if self.fuerza_de(d) is not None)
 
     def volumen_planificado_km(
         self, dias: Sequence[str] | None = None, est: Estimacion = ESTIMACION
@@ -227,9 +267,10 @@ class PlanSemanal:
         """
         total = 0.0
         for d in dias if dias is not None else ORDEN_DIAS:
-            km, _ = self.sesiones[d].km_para_volumen(est)
-            if km:
-                total += km
+            for s in self.dia(d):
+                km, _ = s.km_para_volumen(est)
+                if km:
+                    total += km
         return round(total, 2)
 
     def volumen_estimado_km(
@@ -238,9 +279,10 @@ class PlanSemanal:
         """Parte del volumen planificado que sale de una estimacion, no del plan."""
         total = 0.0
         for d in dias if dias is not None else ORDEN_DIAS:
-            km, estimado = self.sesiones[d].km_para_volumen(est)
-            if km and estimado:
-                total += km
+            for s in self.dia(d):
+                km, estimado = s.km_para_volumen(est)
+                if km and estimado:
+                    total += km
         return round(total, 2)
 
     def dias_sin_estimar(
@@ -250,14 +292,16 @@ class PlanSemanal:
         return tuple(
             d
             for d in (dias if dias is not None else ORDEN_DIAS)
-            if self.sesiones[d].objetivo_min() is not None
-            and self.sesiones[d].objetivo_km_estimado(est) is None
+            if any(
+                s.objetivo_min() is not None and s.objetivo_km_estimado(est) is None
+                for s in self.dia(d)
+            )
         )
 
     def to_json(self) -> dict[str, Any]:
         return {
             "semana": self.semana,
-            "sesiones": {d: self.sesiones[d].to_json() for d in ORDEN_DIAS},
+            "sesiones": {d: [s.to_json() for s in self.dia(d)] for d in ORDEN_DIAS},
             "fuerza_completada": {
                 d: self.fuerza_completada.get(d, False) for d in self.dias_fuerza()
             },
@@ -304,6 +348,18 @@ def sesion_desde_json(d: dict[str, Any]) -> Sesion:
     )
 
 
+def _sesiones_del_dia(v: Any) -> tuple[Sesion, ...]:
+    """Las sesiones de un dia, en formato v1 o v2.
+
+    v1 guardaba una sola sesion por dia como objeto; v2 guarda una lista. Se
+    aceptan las dos para que un `plan_actual.json` ya en disco se siga leyendo
+    sin tocarlo: la primera escritura lo deja en v2.
+    """
+    if isinstance(v, dict):
+        return (sesion_desde_json(v),)
+    return tuple(sesion_desde_json(x) for x in v)
+
+
 def plan_desde_json(d: dict[str, Any]) -> PlanSemanal:
     """Contraparte de `to_json`. Lanza `PlanCorrupto` si el archivo no sirve.
 
@@ -315,12 +371,12 @@ def plan_desde_json(d: dict[str, Any]) -> PlanSemanal:
     from .errors import PlanCorrupto
 
     try:
-        sesiones = {k: sesion_desde_json(v) for k, v in d["sesiones"].items()}
+        sesiones = {k: _sesiones_del_dia(v) for k, v in d["sesiones"].items()}
         semana = int(d["semana"])
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise PlanCorrupto(f"plan ilegible: {exc}") from exc
 
-    faltantes = [x for x in ORDEN_DIAS if x not in sesiones]
+    faltantes = [x for x in ORDEN_DIAS if not sesiones.get(x)]
     if faltantes:
         raise PlanCorrupto(
             f"al plan guardado le faltan los dias {', '.join(faltantes)}; "

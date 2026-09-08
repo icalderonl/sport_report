@@ -34,7 +34,7 @@ from datetime import date, timedelta
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
 
-from ..config import UMBRALES, Umbrales
+from ..config import ESTIMACION, UMBRALES, Estimacion, Umbrales
 from ..db.models import SesionReal, Vuelta
 from ..fechas import RangoSemana
 from ..plan.models import ORDEN_DIAS, PlanSemanal, Sesion
@@ -70,12 +70,23 @@ class DiaAdherencia:
     # tiene valor cuando las vueltas permitieron separarlos; sin esto la linea
     # del reporte diria "8.6km -> 8.6km" y se perderia que se corrieron 10.
     recuperacion_km: float | None = None
+    # Todos los tipos planificados ese dia. `tipo_plan` sigue siendo el de la
+    # corrida principal (o `fuerza`/`rest` cuando es lo unico), para que el
+    # formateo del mensaje no tenga que cambiar de criterio.
+    tipos_plan: tuple[str, ...] = ()
+    # Estado de la fuerza cuando el dia tiene fuerza ADEMAS de una corrida. Si
+    # la fuerza es lo unico del dia sigue yendo en `estado`, como siempre.
+    fuerza: dict[str, Any] | None = None
+    # Corridas planificadas ese dia. Pesa el porcentaje global: un dia con dos
+    # sesiones cumplidas vale dos, no una.
+    corridas_planificadas: int = 0
 
     def to_json(self) -> dict[str, Any]:
         return {
             "dia": self.dia,
             "fecha": self.fecha,
             "tipo_plan": self.tipo_plan,
+            "tipos_plan": list(self.tipos_plan or (self.tipo_plan,)),
             "objetivo": self.objetivo,
             "unidad": self.unidad,
             "real": self.real,
@@ -84,6 +95,7 @@ class DiaAdherencia:
             "nota": self.nota,
             "actividades": list(self.actividades),
             "recuperacion_km": self.recuperacion_km,
+            "fuerza": self.fuerza,
         }
 
 
@@ -165,7 +177,7 @@ def _descontar_recuperacion(
     sesion_plan: Sesion,
     corridas: Sequence[SesionReal],
     real_total: float,
-    vueltas: Mapping[int, Sequence[Vuelta]],
+    vueltas: Mapping[tuple[str, str], Sequence[Vuelta]],
 ) -> tuple[float, str, float | None]:
     """Deja `real` en la distancia DECLARADA, comparable contra la del plan.
 
@@ -203,18 +215,74 @@ def _descontar_recuperacion(
     ), None
 
 
+def _objetivo_agregado(
+    planificadas: Sequence[Sesion], est: Estimacion = ESTIMACION
+) -> tuple[float | None, str, str]:
+    """(objetivo, unidad, nota) del dia sumando todas las corridas planificadas.
+
+    Con una sola sesion es su objetivo en su unidad nativa, igual que siempre.
+    Con varias:
+
+    - misma unidad -> se suman y se compara en esa unidad;
+    - unidades mezcladas -> el dia se evalua en km, estimando los minutos con
+      `km_para_volumen`, y la nota lo dice. Si alguna no se puede estimar, no
+      hay objetivo: el dia queda como dato faltante, nunca como incumplimiento.
+    """
+    if len(planificadas) == 1:
+        s = planificadas[0]
+        if s.objetivo_km() is not None:
+            return s.objetivo_km(), "km", ""
+        return s.objetivo_min(), "min", ""
+
+    unidades = {s.unidad for s in planificadas}
+    if unidades == {"km"}:
+        total = sum(s.objetivo_km() or 0.0 for s in planificadas)
+        return round(total, 2), "km", f"{len(planificadas)} sesiones planificadas, sumadas"
+    if unidades == {"min"}:
+        total = sum(s.objetivo_min() or 0.0 for s in planificadas)
+        return round(total, 2), "min", f"{len(planificadas)} sesiones planificadas, sumadas"
+
+    total = 0.0
+    for s in planificadas:
+        km, _ = s.km_para_volumen(est)
+        if km is None:
+            return None, "km", (
+                f"el dia mezcla km y minutos y la sesion `{s.tipo}` no se puede "
+                "estimar en km (sin ritmo): no se compara para no inventar un objetivo"
+            )
+        total += km
+    return round(total, 2), "km", (
+        f"{len(planificadas)} sesiones planificadas en unidades distintas: el dia "
+        "se compara en km, estimando las prescritas por tiempo"
+    )
+
+
 def _evaluar_dia(
-    sesion_plan: Sesion,
+    planificadas: Sequence[Sesion],
     fecha: date,
     reales: Sequence[SesionReal],
     fuerza_completada: bool,
     umbrales: Umbrales,
-    vueltas: Mapping[int, Sequence[Vuelta]] = MappingProxyType({}),
+    vueltas: Mapping[tuple[str, str], Sequence[Vuelta]] = MappingProxyType({}),
 ) -> DiaAdherencia:
     ids = tuple(s.id_externo for s in reales)
-    base = dict(dia=sesion_plan.dia, fecha=fecha.isoformat(), tipo_plan=sesion_plan.tipo)
+    letra = planificadas[0].dia
+    tipos = tuple(s.tipo for s in planificadas)
+    sesion_fuerza = next((s for s in planificadas if s.es_fuerza), None)
+    corridas_plan = [s for s in planificadas if not s.es_fuerza and not s.es_descanso]
 
-    if sesion_plan.es_descanso:
+    # `tipo_plan` conserva su semantica de siempre: el tipo de la corrida
+    # principal, o `fuerza`/`rest` cuando es lo unico que hay ese dia.
+    tipo_plan = corridas_plan[0].tipo if corridas_plan else planificadas[0].tipo
+    base = dict(
+        dia=letra,
+        fecha=fecha.isoformat(),
+        tipo_plan=tipo_plan,
+        tipos_plan=tipos,
+        corridas_planificadas=len(corridas_plan),
+    )
+
+    if not corridas_plan and all(s.es_descanso for s in planificadas):
         hubo = bool(reales)
         nombres = ", ".join(s.tipo for s in reales)
         return DiaAdherencia(
@@ -228,7 +296,7 @@ def _evaluar_dia(
             actividades=ids,
         )
 
-    if sesion_plan.es_fuerza:
+    if not corridas_plan:  # solo fuerza
         return DiaAdherencia(
             **base,
             objetivo=None,
@@ -236,16 +304,35 @@ def _evaluar_dia(
             real=None,
             pct=None,
             estado=FUERZA_OK if fuerza_completada else FUERZA_PENDIENTE,
-            nota="" if fuerza_completada else "no detectada en Strava ni marcada con /fuerza",
+            nota="" if fuerza_completada else "no detectada en la fuente ni marcada con /fuerza",
             actividades=ids,
         )
+
+    # Ademas de correr, el dia puede tener fuerza. Va en su propio bloque para
+    # no mezclar un check binario con un porcentaje de kilometros.
+    if sesion_fuerza is not None:
+        base["fuerza"] = {
+            "estado": FUERZA_OK if fuerza_completada else FUERZA_PENDIENTE,
+            "nota": "" if fuerza_completada else "no detectada en la fuente ni marcada con /fuerza",
+        }
 
     # Sesion de carrera: solo se compara contra corridas. La fuerza registrada
     # ese dia no entra, y tampoco la bici o la natacion, que traen distancia
     # propia y falsearian tanto los km como los minutos del dia.
     corridas = [s for s in reales if s.es_run]
-    unidad = "km" if sesion_plan.objetivo_km() is not None else "min"
-    objetivo = sesion_plan.objetivo_km() if unidad == "km" else sesion_plan.objetivo_min()
+    objetivo, unidad, nota_objetivo = _objetivo_agregado(corridas_plan)
+
+    if objetivo is None:
+        return DiaAdherencia(
+            **base,
+            objetivo=None,
+            unidad=unidad,
+            real=None,
+            pct=None,
+            estado=DATO_FALTANTE,
+            nota=nota_objetivo,
+            actividades=ids,
+        )
 
     if not corridas:
         return DiaAdherencia(
@@ -275,11 +362,22 @@ def _evaluar_dia(
             actividades=ids,
         )
 
-    nota = ""
+    nota = nota_objetivo
     recuperacion = None
-    if sesion_plan.estructura is not None and unidad == "km":
-        real, nota, recuperacion = _descontar_recuperacion(
-            sesion_plan, corridas, real, vueltas
+    estructuradas = [s for s in corridas_plan if s.estructura is not None]
+    # El descuento de recuperacion empareja UNA sesion planificada con UNA
+    # actividad real. Con mas de una de cualquiera de los dos lados no se sabe
+    # que vuelta pertenece a que sesion, y adivinarlo produciria un numero
+    # peor que el total honesto.
+    if len(estructuradas) == 1 and len(corridas_plan) == 1 and unidad == "km":
+        real, nota_rec, recuperacion = _descontar_recuperacion(
+            estructuradas[0], corridas, real, vueltas
+        )
+        nota = (nota + "; " if nota else "") + nota_rec
+    elif estructuradas and unidad == "km":
+        nota = (nota + "; " if nota else "") + (
+            "hay `estructura=` pero el dia tiene varias sesiones planificadas: no se "
+            "pudo separar la recuperacion, el porcentaje sale alto"
         )
 
     if falta:
@@ -299,16 +397,19 @@ def _evaluar_dia(
     )
 
 
-def _dia_pendiente(sesion_plan: Sesion, fecha: date) -> DiaAdherencia:
+def _dia_pendiente(planificadas: Sequence[Sesion], fecha: date) -> DiaAdherencia:
     """Dia de una semana en curso que todavia no llega. No es incumplimiento."""
-    unidad = "km" if sesion_plan.objetivo_km() is not None else (
-        "min" if sesion_plan.objetivo_min() is not None else None
-    )
-    objetivo = sesion_plan.objetivo_km() if unidad == "km" else sesion_plan.objetivo_min()
+    corridas_plan = [s for s in planificadas if not s.es_fuerza and not s.es_descanso]
+    if corridas_plan:
+        objetivo, unidad, _ = _objetivo_agregado(corridas_plan)
+    else:
+        objetivo, unidad = None, None
     return DiaAdherencia(
-        dia=sesion_plan.dia,
+        dia=planificadas[0].dia,
         fecha=fecha.isoformat(),
-        tipo_plan=sesion_plan.tipo,
+        tipo_plan=corridas_plan[0].tipo if corridas_plan else planificadas[0].tipo,
+        tipos_plan=tuple(s.tipo for s in planificadas),
+        corridas_planificadas=len(corridas_plan),
         objetivo=objetivo,
         unidad=unidad,
         real=None,
@@ -324,7 +425,7 @@ def calcular(
     sesiones: Iterable[SesionReal],
     umbrales: Umbrales = UMBRALES,
     hasta: date | None = None,
-    vueltas: Mapping[int, Sequence[Vuelta]] | None = None,
+    vueltas: Mapping[tuple[str, str], Sequence[Vuelta]] | None = None,
 ) -> ResumenAdherencia:
     """`hasta` (inclusive) evalua una semana en curso; None evalua los 7 dias.
 
@@ -371,15 +472,15 @@ def calcular(
             hasta is not None
             and fecha == hasta
             and not reales_dia
-            and not plan.sesiones[letra].es_descanso
+            and not plan.es_descanso(letra)
         )
         if futuro or hoy_sin_nada:
-            dias.append(_dia_pendiente(plan.sesiones[letra], fecha))
+            dias.append(_dia_pendiente(plan.dia(letra), fecha))
             continue
         transcurridos.append(letra)
         dias.append(
             _evaluar_dia(
-                plan.sesiones[letra],
+                plan.dia(letra),
                 fecha,
                 reales_dia,
                 plan.fuerza_completada.get(letra, False),
@@ -388,9 +489,20 @@ def calcular(
             )
         )
 
-    evaluables = [d for d in dias if d.estado in (CUMPLIDA, BAJO_PLAN, SOBRE_PLAN, SIN_SESION)]
-    cumplidas = [d for d in evaluables if d.estado == CUMPLIDA]
-    fuerza = [d for d in dias if d.tipo_plan == "fuerza" and d.estado != PENDIENTE]
+    # Se cuentan SESIONES planificadas, no dias: un dia con dos corridas
+    # cumplidas vale dos. Con una sesion por dia el numero es el de siempre.
+    evaluados = [d for d in dias if d.estado in (CUMPLIDA, BAJO_PLAN, SOBRE_PLAN, SIN_SESION)]
+    evaluables = sum(max(d.corridas_planificadas, 1) for d in evaluados)
+    cumplidas = sum(
+        max(d.corridas_planificadas, 1) for d in evaluados if d.estado == CUMPLIDA
+    )
+    # La fuerza se cuenta por su propio lado, este o no sola en su dia.
+    fuerza = [
+        d
+        for d in dias
+        if d.estado != PENDIENTE
+        and ("fuerza" in (d.tipos_plan or (d.tipo_plan,)))
+    ]
 
     # El volumen planificado se limita a los dias transcurridos: comparar lo
     # corrido hasta hoy contra el total de la semana daria siempre "bajo plan".
@@ -418,11 +530,16 @@ def calcular(
         volumen_estimado_km=estimado,
         volumen_planificado_semana_km=planificado_semana,
         dias_transcurridos=len(transcurridos),
-        sesiones_evaluables=len(evaluables),
-        sesiones_cumplidas=len(cumplidas),
+        sesiones_evaluables=evaluables,
+        sesiones_cumplidas=cumplidas,
         dias_sin_dato=sum(1 for d in dias if d.estado == DATO_FALTANTE),
         fuerza_planificadas=len(fuerza),
-        fuerza_cumplidas=sum(1 for d in fuerza if d.estado == FUERZA_OK),
+        fuerza_cumplidas=sum(
+            1
+            for d in fuerza
+            if d.estado == FUERZA_OK
+            or (d.fuerza or {}).get("estado") == FUERZA_OK
+        ),
         no_planificadas=tuple(d.dia for d in dias if d.estado == DESCANSO_ROTO),
         avisos=tuple(avisos),
     )

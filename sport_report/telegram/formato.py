@@ -79,6 +79,18 @@ def _bloque_confiable(datos: dict, lineas: list[str]) -> None:
         lineas.append(f"  (no confiable: {datos['motivo']})")
 
 
+def _cola_fuerza(d: dict) -> str:
+    """Sufijo cuando el dia tiene fuerza ADEMAS de una corrida.
+
+    Con la fuerza sola en su dia, el estado ya la describe y no hace falta.
+    """
+    fz = d.get("fuerza")
+    if not fz:
+        return ""
+    estado = "cumplida" if fz.get("estado") == "fuerza_cumplida" else "pendiente"
+    return f" + fuerza ({estado})"
+
+
 def _linea_dia(d: dict) -> str:
     marca = MARCAS.get(d["estado"], "?")
     dia = NOMBRE_DIA.get(d["dia"], d["dia"])
@@ -87,7 +99,10 @@ def _linea_dia(d: dict) -> str:
     if d["estado"] == "pendiente":
         u = d["unidad"] or ""
         objetivo = f"{tipo} {_num(d['objetivo'], u)}" if d["objetivo"] is not None else tipo
-        return f"[{marca}] {dia}  {objetivo} (pendiente)"
+        # El dia entero esta pendiente, asi que la fuerza tambien: repetir
+        # "(pendiente)" dos veces en la misma linea solo estorba.
+        cola = " + fuerza" if d.get("fuerza") else ""
+        return f"[{marca}] {dia}  {objetivo} (pendiente){cola}"
 
     if tipo == "rest":
         cola = d["nota"] if d["nota"] else "descanso"
@@ -100,13 +115,14 @@ def _linea_dia(d: dict) -> str:
     obj = _num(d["objetivo"], u)
     if d["real"] is None:
         real = "sin dato" if d["estado"] == "dato_faltante" else "no registrada"
-        return f"[{marca}] {dia}  {tipo} {obj} -> {real}"
+        return f"[{marca}] {dia}  {tipo} {obj} -> {real}{_cola_fuerza(d)}"
     linea = f"[{marca}] {dia}  {tipo} {obj} -> {_num(d['real'], u)} ({_num(d['pct'], '%')})"
     # La comparacion de una sesion con `estructura=` deja fuera la recuperacion
     # trotada. Sin decirlo, la linea parece contradecir el volumen de la semana.
+    # Va pegada a la cifra de la corrida, antes de la fuerza, que es de otra cosa.
     if d.get("recuperacion_km"):
         linea += f" +{_num(d['recuperacion_km'], 'km')} rec"
-    return linea
+    return linea + _cola_fuerza(d)
 
 
 def formatear_reporte(datos: dict, narrativa: str | None = None) -> str:

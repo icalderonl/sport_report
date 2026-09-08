@@ -232,45 +232,50 @@ def _parse_sesion(dia: str, cuerpo: str) -> Sesion:
 # --------------------------------------------------------------------------
 
 
-def parse_plan(texto: str) -> PlanSemanal:
-    """Parsea el plan completo. Lanza PlanInvalido con TODOS los errores hallados."""
+def _numerar(texto: str, comandos: tuple[str, ...] = ("/setplan",)) -> list[tuple[int, str]]:
+    """Lineas utiles con su numero: sin vacias, sin comentarios, sin el comando."""
     lineas: list[tuple[int, str]] = []
     for i, bruta in enumerate(texto.splitlines(), start=1):
         linea = bruta.strip()
         if not linea or linea.startswith("#"):
             continue
-        if linea.lower().startswith("/setplan"):
-            resto = linea[len("/setplan") :].strip()
-            if resto:
-                lineas.append((i, resto))
-            continue
-        lineas.append((i, linea))
+        bajo = linea.lower()
+        for comando in comandos:
+            if bajo.startswith(comando):
+                resto = linea[len(comando) :].strip()
+                if resto:
+                    lineas.append((i, resto))
+                break
+        else:
+            lineas.append((i, linea))
+    return lineas
 
-    if not lineas:
-        raise PlanInvalido([ErrorPlan(1, None, "el plan esta vacio")])
 
+def _parse_dias(
+    cuerpo: list[tuple[int, str]]
+) -> tuple[dict[str, list[Sesion]], list[ErrorPlan], dict[str, list[int]]]:
+    """Parsea lineas `<dia>: <sesion>`. Devuelve lo entendido y los errores.
+
+    Un dia puede tener varias lineas (una corrida y fuerza el mismo dia, o dos
+    corridas). Las restricciones que si se aplican:
+
+    - `rest` es exclusivo: declarar descanso y ademas una sesion es una
+      contradiccion, no dos sesiones.
+    - como maximo una `fuerza` por dia: es lo que permite que el cumplimiento
+      de fuerza siga siendo un booleano por dia.
+
+    Devuelve tambien las lineas vistas por dia, incluidas las que no parsearon:
+    un dia con una linea rota ya tiene su error y no hay que acusarlo ademas de
+    faltar.
+
+    Es el UNICO camino de validacion de lineas de dia: lo usan `parse_plan` y
+    `parse_dias` (el que llama /corregir), para que los mensajes de error sean
+    identicos por construccion.
+    """
+    sesiones: dict[str, list[Sesion]] = {}
     errores: list[ErrorPlan] = []
+    lineas_por_dia: dict[str, list[int]] = {}
 
-    # --- cabecera ---
-    nro_linea, primera = lineas[0]
-    ms = RE_SEMANA.match(primera)
-    if ms:
-        semana = int(ms.group(1))
-        cuerpo = lineas[1:]
-    else:
-        errores.append(
-            ErrorPlan(
-                nro_linea,
-                None,
-                f"se esperaba `semana: <N>` como primera linea, se encontro '{primera}'",
-            )
-        )
-        semana = 0
-        cuerpo = lineas
-
-    # --- dias ---
-    sesiones: dict[str, Sesion] = {}
-    vistos: dict[str, int] = {}
     for nro_linea, linea in cuerpo:
         md = RE_LINEA_DIA.match(linea)
         if not md:
@@ -297,20 +302,95 @@ def parse_plan(texto: str) -> PlanSemanal:
             continue
 
         dia = md.group(1).upper()
-        if dia in vistos:
-            errores.append(
-                ErrorPlan(
-                    nro_linea, dia, f"dia repetido (ya aparecio en la linea {vistos[dia]})"
-                )
-            )
-            continue
-        vistos[dia] = nro_linea
-
+        anteriores = lineas_por_dia.setdefault(dia, [])
         try:
-            sesiones[dia] = _parse_sesion(dia, md.group(2).strip())
+            sesion = _parse_sesion(dia, md.group(2).strip())
         except ValueError as exc:
             errores.append(ErrorPlan(nro_linea, dia, str(exc)))
+            anteriores.append(nro_linea)
+            continue
 
+        previas = sesiones.setdefault(dia, [])
+        if previas and (sesion.tipo == "rest" or any(p.tipo == "rest" for p in previas)):
+            errores.append(
+                ErrorPlan(
+                    nro_linea,
+                    dia,
+                    "`rest` no puede convivir con otra sesion el mismo dia (la otra "
+                    f"esta en la linea {anteriores[0]}); si entrenaste, quita el `rest`",
+                )
+            )
+            anteriores.append(nro_linea)
+            continue
+        if sesion.es_fuerza and any(p.es_fuerza for p in previas):
+            errores.append(
+                ErrorPlan(
+                    nro_linea,
+                    dia,
+                    "solo se admite una sesion de `fuerza` por dia (ya hay una en la "
+                    f"linea {anteriores[0]})",
+                )
+            )
+            anteriores.append(nro_linea)
+            continue
+
+        previas.append(sesion)
+        anteriores.append(nro_linea)
+
+    return sesiones, errores, lineas_por_dia
+
+
+def parse_dias(texto: str) -> dict[str, tuple[Sesion, ...]]:
+    """Lineas de dia sueltas, sin cabecera `semana:` ni los 7 dias. Para /corregir.
+
+    Mismo parser y mismos mensajes que `/setplan`: no hay una ruta de
+    validacion paralela que se pueda desincronizar.
+    """
+    lineas = _numerar(texto, comandos=("/corregir", "/setplan"))
+    if not lineas:
+        raise PlanInvalido([ErrorPlan(1, None, "no hay ninguna linea que corregir")])
+
+    sesiones, errores, _ = _parse_dias(lineas)
+    if errores:
+        raise PlanInvalido(errores)
+    return {d: tuple(v) for d, v in sesiones.items()}
+
+
+def parse_plan(texto: str) -> PlanSemanal:
+    """Parsea el plan completo. Lanza PlanInvalido con TODOS los errores hallados."""
+    lineas = _numerar(texto)
+
+    if not lineas:
+        raise PlanInvalido([ErrorPlan(1, None, "el plan esta vacio")])
+
+    errores: list[ErrorPlan] = []
+
+    # --- cabecera ---
+    nro_linea, primera = lineas[0]
+    ms = RE_SEMANA.match(primera)
+    if ms:
+        semana = int(ms.group(1))
+        cuerpo = lineas[1:]
+    else:
+        errores.append(
+            ErrorPlan(
+                nro_linea,
+                None,
+                f"se esperaba `semana: <N>` como primera linea, se encontro '{primera}'",
+            )
+        )
+        semana = 0
+        cuerpo = lineas
+
+    # --- dias ---
+    sesiones, errores_dias, vistos = _parse_dias(cuerpo)
+    errores.extend(errores_dias)
+
+    # "Al menos una linea", no "exactamente una": la unicidad por dia dejo de
+    # ser un requisito cuando el plan admitio dos entrenamientos el mismo dia.
+    # Se mira lo VISTO y no lo parseado: un dia con una linea rota ya tiene su
+    # error, y decir ademas que falta manda a buscar el problema al lugar
+    # equivocado.
     faltantes = [d for d in ORDEN_DIAS if d not in vistos]
     if faltantes:
         nombres = ", ".join(f"{d} ({DIAS[d]})" for d in faltantes)
@@ -326,4 +406,8 @@ def parse_plan(texto: str) -> PlanSemanal:
     if errores:
         raise PlanInvalido(errores)
 
-    return PlanSemanal(semana=semana, sesiones=sesiones, crudo=texto.strip())
+    return PlanSemanal(
+        semana=semana,
+        sesiones={d: tuple(sesiones.get(d, ())) for d in ORDEN_DIAS},
+        crudo=texto.strip(),
+    )

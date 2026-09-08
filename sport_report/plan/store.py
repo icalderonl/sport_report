@@ -18,11 +18,15 @@ from .. import config
 from ..fechas import RangoSemana, ahora_local, semana_actual, semana_de, semana_siguiente
 from ..storage import escribir_json, leer_json, lock
 from .errors import PlanCorrupto
-from .models import ORDEN_DIAS, PlanSemanal, plan_desde_json
+from .models import DIAS, ORDEN_DIAS, PlanSemanal, plan_desde_json
 
 log = logging.getLogger(__name__)
 
-VERSION_FORMATO = 1
+# v2: cada dia guarda una LISTA de sesiones, no una sola. Un archivo v1 se
+# sigue leyendo (`models._sesiones_del_dia` envuelve la sesion suelta) y se
+# reescribe en v2 en la primera escritura; `python -m sport_report.plan.migrar`
+# lo hace de una sin esperar a que llegue un comando.
+VERSION_FORMATO = 2
 
 
 @dataclass(frozen=True)
@@ -147,10 +151,9 @@ class PlanStore:
                 raise FileNotFoundError(
                     f"no hay plan cargado para {rango}" if rango else "no hay plan cargado"
                 )
-            if not anclado.plan.sesiones[dia].es_fuerza:
-                raise DiaSinFuerza(
-                    f"el plan no tiene fuerza el {anclado.plan.sesiones[dia].nombre_dia}"
-                )
+            sesion_fuerza = anclado.plan.fuerza_de(dia)
+            if sesion_fuerza is None:
+                raise DiaSinFuerza(f"el plan no tiene fuerza el {DIAS[dia]}")
             estado = dict(anclado.plan.fuerza_completada)
             estado[dia] = completado
             nuevo = replace(anclado, plan=replace(anclado.plan, fuerza_completada=estado))
