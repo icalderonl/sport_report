@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from . import config
 from .db.repo import Repo
 from .fechas import ahora_local, semana_a_reportar
+from .plan.carrera import CarreraStore
 from .plan.store import PlanStore
 from .storage import leer_json
 
@@ -177,6 +178,13 @@ def main() -> int:
         pendientes = [d for d in p.dias_fuerza() if not p.fuerza_completada.get(d)]
         if pendientes:
             linea(AVISO, "fuerza pendiente", ", ".join(pendientes))
+
+    carrera = CarreraStore().cargar()
+    if carrera is None:
+        linea(OK, "carrera objetivo", "ninguna declarada (opcional)")
+    else:
+        c = carrera.contexto()
+        linea(OK, "carrera objetivo", f"{c['fecha']} {c['nombre']}: {c['nota']}")
 
     objetivo = semana_a_reportar()
     if store.para_semana(objetivo) is None:

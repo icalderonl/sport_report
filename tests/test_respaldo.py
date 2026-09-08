@@ -173,3 +173,20 @@ def test_la_corrida_semanal_no_falla_si_el_respaldo_falla(monkeypatch, caplog):
     run_weekly._respaldar(run_weekly.log)  # no debe lanzar
 
     assert "no se pudo respaldar" in caplog.text
+
+
+def test_la_carrera_objetivo_se_respalda(data, tmp_path):
+    """Se declaro una vez y no esta en ninguna otra parte."""
+    escribir_json(data / "carrera.json", {"version": 1, "fecha": "2026-11-15",
+                                          "nombre": "Maraton"})
+    carpeta, piezas = respaldo.respaldar(destino=tmp_path / "resp", origen=data)
+
+    assert "carrera.json" in piezas
+    assert (carpeta / "carrera.json").exists()
+    assert "Maraton" in (carpeta / "carrera.json").read_text(encoding="utf-8")
+
+
+def test_sin_carrera_declarada_el_respaldo_no_falla(data, tmp_path):
+    carpeta, piezas = respaldo.respaldar(destino=tmp_path / "resp", origen=data)
+    assert "carrera.json" not in piezas
+    assert carpeta.exists()

@@ -37,7 +37,9 @@ log = logging.getLogger(__name__)
 # Subdirectorios de data/ que se copian enteros.
 DIRECTORIOS = ("planes", "reportes")
 # Archivos sueltos. El que importa de verdad es tokens.json.
-ARCHIVOS = ("tokens.json", "plan_actual.json")
+# La carrera objetivo se respalda como el plan: se declaro una vez y no
+# esta en ninguna otra parte.
+ARCHIVOS = ("tokens.json", "plan_actual.json", "carrera.json")
 
 
 def _marca_de_tiempo(momento: datetime | None = None) -> str:

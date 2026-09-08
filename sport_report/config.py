@@ -36,6 +36,11 @@ DB_PATH = DATA_DIR / "sport_report.db"
 TOKENS_PATH = DATA_DIR / "tokens.json"
 PLAN_ACTUAL_PATH = DATA_DIR / "plan_actual.json"
 PLANES_DIR = DATA_DIR / "planes"
+# Aparte del plan a proposito: la carrera objetivo dura meses y /setplan
+# reemplaza el plan cada semana.
+CARRERA_PATH = DATA_DIR / "carrera.json"
+REPORTES_DIR = DATA_DIR / "reportes"
+REPORTES_MENSUALES_DIR = REPORTES_DIR / "mensual"
 
 TZ = ZoneInfo(os.getenv("TZ_LOCAL", "America/Santiago"))
 
@@ -106,10 +111,23 @@ class Bienestar:
     readiness_bajo: float = 40.0
 
 
+@dataclass(frozen=True)
+class Carrera:
+    """Fases del ciclo alrededor de la carrera objetivo, en semanas restantes.
+
+    Ajustables: son convenciones de planificacion, no verdades. Solo se usan
+    para etiquetar el contexto que lee la narrativa, nunca para calcular carga.
+    """
+
+    semanas_afinamiento: int = 2
+    semanas_construccion: int = 8
+
+
 UMBRALES = Umbrales()
 CARGA = Carga()
 ESTIMACION = Estimacion()
 BIENESTAR = Bienestar()
+CARRERA = Carrera()
 
 # Semanas que muestra el grafico de volumen del reporte.
 SEMANAS_GRAFICO = 16

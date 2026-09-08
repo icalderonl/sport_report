@@ -261,3 +261,55 @@ def test_sin_token_el_bot_no_arranca(monkeypatch):
 
     with pytest.raises(SystemExit, match="TELEGRAM_BOT_TOKEN"):
         bot.main()
+
+
+# --------------------------------------------------------------------------
+# Comandos de fase 2
+# --------------------------------------------------------------------------
+
+
+class CtxFalso:
+    """Lo unico que los handlers leen del contexto son los argumentos."""
+
+    def __init__(self, args=None):
+        self.args = args or []
+
+
+def test_corregir_recibe_el_texto_completo_y_no_solo_los_args(chat_autorizado, monkeypatch):
+    """Una correccion puede traer varias lineas; ctx.args las perderia."""
+    visto = {}
+
+    def falso(store, texto, hoy=None):
+        visto["texto"] = texto
+        return "ok"
+
+    monkeypatch.setattr(comandos, "cmd_corregir", falso)
+    u = UpdateFalso(texto="/corregir\nM: easy 8km Z2\nM: fuerza")
+    asyncio.run(bot.on_corregir(u, CtxFalso(["M:", "easy"])))
+
+    assert visto["texto"].count("\n") == 2
+    assert u.effective_message.respuestas == ["ok"]
+
+
+def test_carrera_pasa_los_argumentos_como_texto(chat_autorizado, monkeypatch):
+    visto = {}
+
+    def falso(store, arg, hoy=None):
+        visto["arg"] = arg
+        return "ok"
+
+    monkeypatch.setattr(comandos, "cmd_carrera", falso)
+    asyncio.run(
+        bot.on_carrera(
+            UpdateFalso(texto="/carrera 2026-11-15 Maraton de Santiago"),
+            CtxFalso(["2026-11-15", "Maraton", "de", "Santiago"]),
+        )
+    )
+    assert visto["arg"] == "2026-11-15 Maraton de Santiago"
+
+
+def test_los_comandos_nuevos_no_responden_a_un_chat_ajeno(chat_autorizado):
+    for handler in (bot.on_corregir, bot.on_carrera):
+        u = UpdateFalso(chat_id=999, texto="/x")
+        asyncio.run(handler(u, CtxFalso([])))
+        assert u.effective_message.respuestas == []

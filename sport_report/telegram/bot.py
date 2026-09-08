@@ -14,12 +14,14 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 from .. import config
 from ..logging_setup import setup
+from ..plan.carrera import CarreraStore
 from ..plan.store import PlanStore
 from . import comandos
 from .formato import trozos
 
 log = logging.getLogger(__name__)
 _store = PlanStore()
+_carrera = CarreraStore()
 
 
 def _autorizado(update: Update) -> bool:
@@ -68,6 +70,17 @@ def on_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
 @_handler
 def on_setplan(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
     return comandos.cmd_setplan(_store, update.effective_message.text or "")
+
+
+@_handler
+def on_corregir(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
+    # El texto completo, no ctx.args: una correccion puede traer varias lineas.
+    return comandos.cmd_corregir(_store, update.effective_message.text or "")
+
+
+@_handler
+def on_carrera(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
+    return comandos.cmd_carrera(_carrera, " ".join(ctx.args or []))
 
 
 @_handler
@@ -123,6 +136,8 @@ def main() -> None:
     app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler(["start", "help", "ayuda"], on_start))
     app.add_handler(CommandHandler("setplan", on_setplan))
+    app.add_handler(CommandHandler(["corregir", "corrige"], on_corregir))
+    app.add_handler(CommandHandler("carrera", on_carrera))
     app.add_handler(CommandHandler("plan", on_plan))
     app.add_handler(CommandHandler("fuerza", on_fuerza))
     app.add_handler(CommandHandler("estado", on_estado))

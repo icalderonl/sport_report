@@ -126,6 +126,57 @@ class PlanStore:
             escribir_json(self.actual, anclado.to_json(), con_lock=False)
         return anclado
 
+    def reemplazar_dia(
+        self,
+        dia: str,
+        sesiones: tuple[Any, ...],
+        rango: RangoSemana | None = None,
+    ) -> PlanAnclado:
+        """Cambia TODAS las sesiones de un dia. Lo usa /corregir.
+
+        Espejo de `marcar_fuerza`: mismo lock, misma resolucion entre el plan
+        vigente y el archivado, misma escritura atomica. Reemplaza el dia
+        completo (no una sesion dentro del dia) porque es lo unico que se puede
+        expresar sin inventar una forma de apuntar a "la segunda sesion del
+        jueves"; para dejar dos, se mandan dos lineas.
+        """
+        dia = dia.upper()
+        if dia not in ORDEN_DIAS:
+            raise ValueError(f"dia '{dia}' invalido")
+        if not sesiones:
+            raise ValueError(
+                f"no hay ninguna sesion con la que reemplazar el {DIAS[dia]}; "
+                "usa `rest` si el dia queda sin entrenamiento"
+            )
+
+        with lock(self.actual):
+            vigente = self.cargar()
+            if rango is None or (vigente and vigente.rango.inicio == rango.inicio):
+                anclado, destino = vigente, self.actual
+            else:
+                destino = self.archivo / f"{rango.clave}.json"
+                anclado = self._leer(destino)
+
+            if anclado is None:
+                raise FileNotFoundError(
+                    f"no hay plan cargado para {rango}" if rango else "no hay plan cargado"
+                )
+
+            nuevas = dict(anclado.plan.sesiones)
+            nuevas[dia] = tuple(sesiones)
+            estado = dict(anclado.plan.fuerza_completada)
+            # Si el dia ya no tiene fuerza, su marca de cumplimiento no
+            # significa nada: dejarla haria que /plan mostrara una fuerza
+            # cumplida que no esta planificada.
+            if not any(s.es_fuerza for s in sesiones):
+                estado.pop(dia, None)
+            nuevo = replace(
+                anclado,
+                plan=replace(anclado.plan, sesiones=nuevas, fuerza_completada=estado),
+            )
+            escribir_json(destino, nuevo.to_json(), con_lock=False)
+        return nuevo
+
     def marcar_fuerza(
         self, dia: str, completado: bool = True, rango: RangoSemana | None = None
     ) -> PlanAnclado:

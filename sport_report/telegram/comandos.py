@@ -12,7 +12,8 @@ from typing import Any
 from .. import fechas
 from ..fechas import RangoSemana, semana_a_reportar
 from ..plan.errors import PlanInvalido
-from ..plan.grammar import parse_plan
+from ..plan.carrera import Carrera, CarreraInvalida, CarreraStore, parse_fecha
+from ..plan.grammar import parse_dias, parse_plan
 from ..plan.models import DIAS, ORDEN_DIAS
 from ..plan.render import resumen
 from ..plan.store import DiaSinFuerza, PlanStore, resolver_rango
@@ -32,16 +33,28 @@ AYUDA = """Comandos:
   S: rest
   D: long 16km @6:15/5:45 Z2
 
-  Los 7 dias son obligatorios (usa `rest` si no hay sesion).
+  Los 7 dias son obligatorios (usa `rest` si no hay sesion). Un dia puede
+  tener mas de una linea (por ejemplo `J: easy 8km Z2` y `J: fuerza`).
   `/setplan proxima` ancla el plan a la semana siguiente.
+
+/corregir <dia>: <sesion> — arregla un dia sin reenviar la semana entera.
+  Reemplaza TODAS las sesiones de ese dia:
+
+  /corregir J: series 8.6km @Z4 estructura=2km+3x1000m+4x400m+2km
+
+  Para dejar dos sesiones ese dia, manda las dos lineas en el mismo comando.
+
+/carrera <YYYY-MM-DD> [nombre] — declara la carrera objetivo, que se conserva
+  entre semanas (`/setplan` no la borra). `/carrera` la consulta y
+  `/carrera borrar` la quita.
 
 /plan — muestra el plan cargado y el estado de las sesiones de fuerza.
 /fuerza <dia> — marca una fuerza como cumplida (L M W J V S D o el nombre).
-  Solo hace falta si la sesion no quedo registrada en Strava.
+  Solo hace falta si la sesion no quedo registrada en la fuente de datos.
   Se aplica a la semana en curso; agrega `anterior` o `proxima` para otra
   (`/fuerza D anterior` el lunes, para el domingo que acaba de pasar).
 /progreso — resumen corto de la semana en curso: cuantos km llevas de los
-  programados y que entrenamientos te quedan. Sincroniza con Strava primero.
+  programados y que entrenamientos te quedan. Sincroniza los datos primero.
 /volumen — grafico de los kilometros por semana de las ultimas 16 semanas.
 /estado — que semana reportaria el cron ahora y con que plan.
 """
@@ -156,6 +169,87 @@ def cmd_fuerza(store: PlanStore, arg: str, hoy: date | None = None) -> str:
         f"Fuerza del {DIAS[dia]} ({anclado.rango}) marcada como cumplida.\n\n"
         f"{resumen(anclado.plan, con_fuerza=True)}"
     )
+
+
+def cmd_corregir(
+    store: PlanStore, texto: str, hoy: date | None = None
+) -> str:
+    """Reemplaza las sesiones de uno o mas dias del plan vigente.
+
+    Usa `parse_dias`, que es el mismo parser y los mismos mensajes de error que
+    `/setplan`: no hay una segunda ruta de validacion que se pueda
+    desincronizar de la primera.
+    """
+    dia_hoy = hoy or fechas.hoy_local()
+    anclado = store.cargar()
+    if anclado is None:
+        return "No hay plan cargado que corregir. Usa /setplan.\n\n" + AYUDA
+
+    # Corregir un dia de una semana que no es la cargada casi siempre significa
+    # que el plan vigente es otro: mejor decirlo que escribir sobre el plan
+    # equivocado.
+    if not (anclado.rango.inicio <= dia_hoy <= anclado.rango.fin):
+        return (
+            f"El plan vigente cubre {anclado.rango} y hoy es {dia_hoy}: no es la "
+            "semana que estarias corrigiendo. Carga la semana en curso con "
+            "/setplan."
+        )
+
+    try:
+        dias = parse_dias(texto)
+    except PlanInvalido as exc:
+        return exc.render()
+
+    for dia, sesiones in dias.items():
+        try:
+            anclado = store.reemplazar_dia(dia, sesiones, anclado.rango)
+        except (FileNotFoundError, ValueError) as exc:
+            return _cap(str(exc))
+
+    nombres = ", ".join(DIAS[d] for d in ORDEN_DIAS if d in dias)
+    return (
+        f"Corregido: {nombres} ({anclado.rango}).\n\n"
+        f"{resumen(anclado.plan, con_fuerza=True)}"
+    )
+
+
+_BORRAR = ("borrar", "quitar", "eliminar", "none", "ninguna")
+
+
+def cmd_carrera(store: CarreraStore, arg: str, hoy: date | None = None) -> str:
+    """Declara, consulta o borra la carrera objetivo."""
+    dia = hoy or fechas.hoy_local()
+    arg = (arg or "").strip()
+
+    if not arg:
+        carrera = store.cargar()
+        if carrera is None:
+            return (
+                "No hay carrera declarada. Se declara asi:\n"
+                "  /carrera 2026-11-15 Maraton de Santiago"
+            )
+        return _describir_carrera(carrera, dia)
+
+    if _sin_tildes(arg.lower()) in _BORRAR:
+        if store.borrar():
+            return "Carrera borrada."
+        return "No habia ninguna carrera declarada."
+
+    partes = arg.split(None, 1)
+    try:
+        fecha = parse_fecha(partes[0], dia)
+    except CarreraInvalida as exc:
+        return _cap(str(exc))
+
+    nombre = partes[1].strip() if len(partes) > 1 else ""
+    carrera = store.guardar(Carrera(fecha=fecha, nombre=nombre))
+    return "Carrera declarada.\n" + _describir_carrera(carrera, dia)
+
+
+def _describir_carrera(carrera: Carrera, hoy: date) -> str:
+    c = carrera.contexto(hoy)
+    etiqueta = f"{c['fecha']}" + (f" — {c['nombre']}" if c["nombre"] else "")
+    return f"{etiqueta}\n  {_cap(c['nota'])}"
 
 
 def cmd_progreso(
