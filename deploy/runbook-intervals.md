@@ -38,9 +38,21 @@ El procedimiento es siempre el mismo:
 1. Editar el `.env` **en el PC**, pegando la clave con copiar/pegar.
 2. Copiarlo a la Pi:
 
+`sportreport` es una cuenta de servicio creada con `--shell /usr/sbin/nologin`:
+no tiene contraseña ni login, así que **no se puede hacer `ssh` ni `scp` como
+ella**. Se entra con el usuario normal de la Pi y el archivo se instala con
+`sudo`:
+
 ```bash
-scp .env sportreport@raspberrypi:/opt/sport_report/.env
+scp .env TU_USUARIO@LA_IP_DE_LA_PI:/tmp/env
 ```
+
+```bash
+sudo install -o sportreport -g sportreport -m 600 /tmp/env /opt/sport_report/.env && rm /tmp/env
+```
+
+El `rm` no es opcional: `scp` deja `/tmp/env` legible por cualquier usuario del
+sistema, y ahí está la clave.
 
 3. Comprobar **contra la API**, no a ojo:
 
