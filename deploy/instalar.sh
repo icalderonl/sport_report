@@ -105,10 +105,15 @@ systemctl enable --now sport-report-weekly.timer
 
 echo
 echo "Listo. Siguientes pasos:"
-echo "  1. Completa $DESTINO/.env  (ver deploy/runbook-*.md)"
-echo "  2. sudo -u $USUARIO $DESTINO/.venv/bin/python -m sport_report.strava.autorizar"
-echo "  3. sudo -u $USUARIO $DESTINO/.venv/bin/python -m sport_report.backfill 120"
-echo "  4. sudo -u $USUARIO $DESTINO/.venv/bin/python -m sport_report.diagnostico"
-echo "  5. sudo systemctl restart sport-report-bot"
+echo "  1. Escribe el .env EN EL PC y copialo con scp a $DESTINO/.env"
+echo "     (no teclees la clave en la Pi; ver deploy/runbook-intervals.md)"
+echo "  2. sudo -u $USUARIO $DESTINO/.venv/bin/python -m sport_report.intervals.verificar"
+echo "  3. sudo -u $USUARIO $DESTINO/.venv/bin/python -m sport_report.intervals.verificar --volcar-claves"
+echo "     (paso obligatorio la primera vez: cierra intervals/campos.py)"
+echo "  4. sudo -u $USUARIO $DESTINO/.venv/bin/python -m sport_report.backfill 120"
+echo "  5. sudo -u $USUARIO $DESTINO/.venv/bin/python -m sport_report.diagnostico"
+echo "  6. sudo systemctl restart sport-report-bot"
+echo
+echo "Opcional (respaldo): sudo -u $USUARIO $DESTINO/.venv/bin/python -m sport_report.strava.autorizar"
 echo
 systemctl list-timers sport-report-weekly.timer --no-pager || true

@@ -15,6 +15,11 @@ claude.ai. Necesita billing propio.
 ```
 ANTHROPIC_API_KEY=sk-ant-api03-...
 ANTHROPIC_MODEL=claude-haiku-4-5
+# El reporte mensual usa un modelo mas capaz: es una llamada AL MES, asi que el
+# costo es irrelevante a esa frecuencia. La ventaja esta en sostener un texto
+# sobre cuatro semanas de datos, no en calcular: los agregados los sigue
+# haciendo Python, con la misma verificacion de cifras que el semanal.
+ANTHROPIC_MODEL_MENSUAL=claude-sonnet-5
 ```
 
 ## 2. Probar

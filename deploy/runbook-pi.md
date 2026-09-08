@@ -2,10 +2,14 @@
 
 ## Antes de empezar
 
-Necesitas las credenciales de los otros tres runbooks:
+Necesitas las credenciales de los otros runbooks:
 
-- [runbook-strava.md](runbook-strava.md) — app OAuth (obligatorio)
+- [runbook-intervals.md](runbook-intervals.md) — API key de la **fuente
+  principal** (obligatorio)
 - [runbook-telegram.md](runbook-telegram.md) — bot y chat_id (obligatorio)
+- [runbook-strava.md](runbook-strava.md) — app OAuth del **respaldo** (opcional:
+  sin esto el sistema funciona, pero si intervals.icu cae esa semana no se
+  reporta nada nuevo)
 - [runbook-anthropic.md](runbook-anthropic.md) — API key (opcional: sin esto el
   reporte llega igual, sin el párrafo de resumen)
 
@@ -44,11 +48,37 @@ actualización del código. Hace:
 - Deja `.env` en modo `600` y `data/` `logs/` en `750`.
 - Instala y habilita las unidades de systemd.
 
-## 3. Completar credenciales y autorizar
+## 3. Completar credenciales
+
+**No teclees las claves en la Pi.** Su teclado pierde y sustituye caracteres, y
+una clave con un carácter perdido da un 401 que parece un problema de la API.
+Escribe el `.env` en el PC y cópialo:
 
 ```bash
-sudo -u sportreport nano /opt/sport_report/.env
+scp .env pi@raspberrypi.local:/tmp/env
+sudo install -o sportreport -g sportreport -m 600 /tmp/env /opt/sport_report/.env
+```
 
+Después comprueba **contra la API**, no a ojo:
+
+```bash
+sudo -u sportreport /opt/sport_report/.venv/bin/python -m sport_report.intervals.verificar
+```
+
+Imprime el nombre del atleta y la **longitud** de la clave, nunca la clave. Si
+da 401, el carácter que falta está en el archivo: se vuelve a copiar, no se
+re-teclea.
+
+La primera vez, además, hay que cerrar la tabla de nombres de campo (ver
+[runbook-intervals.md](runbook-intervals.md), sección 4):
+
+```bash
+sudo -u sportreport /opt/sport_report/.venv/bin/python -m sport_report.intervals.verificar --volcar-claves
+```
+
+### Respaldo de Strava (opcional)
+
+```bash
 sudo -u sportreport /opt/sport_report/.venv/bin/python -m sport_report.strava.autorizar
 ```
 
@@ -59,6 +89,50 @@ el `data/tokens.json` resultante:
 scp data/tokens.json pi@raspberrypi.local:/tmp/
 sudo install -o sportreport -g sportreport -m 600 /tmp/tokens.json /opt/sport_report/data/
 ```
+
+## 3bis. Migrar una instalación anterior a fase 2
+
+Solo aplica si la Pi ya venía corriendo la versión de solo-Strava. Dos cosas
+cambian de formato, y **el respaldo del paso 1 no es opcional**: la
+reconstrucción de la tabla `sesiones` es la única operación destructiva del
+esquema.
+
+```bash
+cd /opt/sport_report
+
+# 1. RESPALDO, antes de copiar el codigo nuevo.
+sudo -u sportreport ./.venv/bin/python -m sport_report.respaldo
+# Anota el recuento de sesiones y la primera fecha, para comparar despues:
+sudo -u sportreport ./.venv/bin/python -m sport_report.diagnostico | grep historico
+
+# 2. Copiar el codigo nuevo y reinstalar (pasos 1 y 2 de arriba).
+
+# 3. La base se migra sola al primer `Repo()`. Comprobar que no perdio nada:
+sudo -u sportreport ./.venv/bin/python -m sport_report.diagnostico | grep historico
+
+# 4. Los planes guardados: v1 se lee igual, pero conviene reescribirlos ya.
+sudo -u sportreport ./.venv/bin/python -m sport_report.plan.migrar --dry-run
+sudo -u sportreport ./.venv/bin/python -m sport_report.plan.migrar
+```
+
+Qué cambia exactamente:
+
+- **La base.** `sesiones` y `vueltas` se reconstruyen con clave `(fuente,
+  id_externo)`: el `strava_id INTEGER PRIMARY KEY` era un alias de rowid y no
+  acepta el id textual de intervals.icu. Todo el histórico queda como `fuente =
+  'strava'`, con sus cargas, decouplings y banderas intactos. Se agregan las
+  columnas de dinámica avanzada (en `NULL` para el histórico, porque Strava no
+  las expone) y las tablas `bienestar` y `fuentes_semana`. Reabrir la base no
+  vuelve a migrar.
+- **Los planes.** Cada día pasa a guardar una *lista* de sesiones. Un
+  `plan_actual.json` en v1 se sigue leyendo sin tocarlo y se reescribe en v2 la
+  primera vez que algo lo modifica; `plan.migrar` lo hace de una para no dejarlo
+  a medias en un momento que no eligió nadie. Un plan corrupto no se reescribe:
+  se reporta y se deja para mirarlo a mano.
+
+**El histórico no se re-ingiere desde intervals.icu.** Solo se ingiere hacia
+adelante, así que las semanas viejas quedan sin dinámica avanzada ni bienestar, y
+sus reportes lo dicen.
 
 ## 4. Historial inicial y verificación
 
@@ -78,8 +152,9 @@ lo primero que hay que correr cuando algo no anda.
 sudo -u sportreport ./.venv/bin/python -m sport_report.run_weekly --dry-run
 ```
 
-Imprime el mensaje exacto que mandaría. Con `--sin-ingesta` no toca Strava y con
-`--sin-narrativa` no llama a Claude.
+Imprime el mensaje exacto que mandaría. Con `--sin-ingesta` no consulta ninguna
+fuente, con `--sin-narrativa` no llama a Claude, con `--fuente strava` fuerza el
+respaldo y con `--sin-mensual` salta el reporte mensual.
 
 Para forzar el envío real de una semana concreta:
 

@@ -1,5 +1,14 @@
 # Runbook — app de Strava y autorización inicial
 
+> **Strava es el RESPALDO**, no la fuente principal. El origen de datos es
+> intervals.icu (ver [runbook-intervals.md](runbook-intervals.md)); Strava solo
+> se usa cuando esa falla, y esa semana queda sin GCT, oscilación vertical,
+> ratio vertical ni bienestar, dicho explícitamente en el reporte.
+>
+> Es opcional: sin esto el sistema funciona, pero se queda sin red de
+> seguridad. Como casi nunca se ejercita, su credencial puede podrirse sin que
+> nadie lo note; `python -m sport_report.diagnostico` la vigila aparte.
+
 La Pi corre sin nadie en el loop, así que necesita su propia app OAuth y su
 propio `refresh_token`. Esto se hace **una sola vez**.
 
