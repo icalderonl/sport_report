@@ -24,7 +24,15 @@ log = logging.getLogger(__name__)
 #: campo propio -> nombres candidatos en la respuesta, en orden de preferencia.
 CANDIDATOS: dict[str, tuple[str, ...]] = {
     # -- actividad: lo que Strava no expone y por lo que se cambio de fuente --
+    # Confirmado contra la cuenta real el 2026-09-08: intervals.icu no usa
+    # ninguna variante de "gct". Llama al tiempo de contacto con el nombre que
+    # trae Garmin en el FIT, `average_stance_time`, y lo da ya en ms.
+    #
+    # OJO con los dos vecinos que aparecen al lado en la respuesta y NO son
+    # esto: `average_stance_time_percent` es el porcentaje de la zancada y
+    # `average_stance_time_balance` el reparto entre piernas.
     "gct_ms": (
+        "average_stance_time",
         "average_gct",
         "gct",
         "ground_time",

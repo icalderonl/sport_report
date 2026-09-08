@@ -235,6 +235,33 @@ def test_se_toma_el_primer_candidato_presente():
     assert campos.primero({"average_gct": 1.0, "gct": 2.0}, "gct_ms") == 1.0
 
 
+def test_el_gct_llega_como_average_stance_time():
+    """Nombre real, visto en la cuenta el 2026-09-08.
+
+    Ninguna variante de "gct" existe en intervals.icu: usa el nombre del FIT de
+    Garmin. Con la tabla anterior el reporte daba `disponible: false` teniendo
+    el dato delante, que es el fallo silencioso que esta tabla existe para
+    evitar.
+    """
+    crudo = {
+        "average_stance_time": 251.0,
+        # Los dos vecinos que NO son el GCT y estan justo al lado en la
+        # respuesta real: si alguno se colara en la tupla, el reporte
+        # publicaria un porcentaje como si fueran milisegundos.
+        "average_stance_time_percent": 32.4,
+        "average_stance_time_balance": 49.8,
+    }
+    assert campos.numero(crudo, "gct_ms") == 251.0
+    assert campos.gct_ms(campos.numero(crudo, "gct_ms")) == 251.0
+
+
+def test_la_oscilacion_real_de_la_cuenta_se_convierte_a_cm():
+    """average_vertical_oscillation = 104.930954 en la respuesta real: son mm."""
+    assert campos.oscilacion_cm(104.930954) == 10.49
+    # El ratio vertical si viene ya en porcentaje, sin conversion.
+    assert campos.numero({"average_vertical_ratio": 10.282365}, "ratio_vertical_pct") == 10.282365
+
+
 def test_un_campo_ausente_o_nulo_es_none_y_nunca_cero():
     """Es la regla que hace honesto el reporte de una semana degradada."""
     assert campos.primero({}, "gct_ms") is None
