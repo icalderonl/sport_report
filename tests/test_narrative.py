@@ -500,3 +500,75 @@ def test_el_prompt_explica_que_disponible_false_no_es_un_cero():
 
     assert '"disponible": false' in SISTEMA
     assert "como un cero" in SISTEMA and "en silencio" in SISTEMA
+
+
+# --------------------------------------------------------------------------
+# Falsos positivos de la primera prueba real contra la API
+#
+# El aviso de cifra mal atribuida SUBE al reporte del atleta ("no te fies de
+# ese numero"). Un falso positivo semanal lo convierte en ruido y le hace
+# desconfiar de cifras correctas, que es peor que no avisar. Estas frases son
+# textuales de la primera llamada real con el JSON de fase 2.
+# --------------------------------------------------------------------------
+
+
+def test_el_valor_entre_parentesis_no_se_le_cuelga_a_la_metrica_siguiente():
+    """"...reduccion de 8.0 ms (232.0 ms), pero la oscilacion vertical..."
+
+    232.0 es el GCT y esta correcto. Su propio nombre queda descartado por el
+    digito del delta que hay en medio, y sin la regla del parentesis el numero
+    se le colgaba a la oscilacion vertical.
+    """
+    texto = (
+        "El ground contact time mejoro con una reduccion de 8.0 ms (232.0 ms), "
+        "pero la oscilacion vertical crecio 0.3 cm (8.4 cm) y el ratio vertical "
+        "aumento 0.3 puntos porcentuales (7.9%)."
+    )
+    assert verificar_atribucion(texto, COMPLETO) == []
+
+
+def test_la_coma_corta_la_atribucion_hacia_adelante():
+    """"...HRV bajo 8.0 ms hasta 62.0 ms, la frecuencia cardiaca de reposo..."
+
+    62.0 es el HRV. La coma cierra su clausula: no puede pertenecer a la
+    metrica que empieza despues.
+    """
+    texto = (
+        "La variabilidad de frecuencia cardiaca (HRV) bajo 8.0 ms hasta 62.0 ms, "
+        "la frecuencia cardiaca de reposo subio 2.0 lpm (50.0 lpm), el sueno se "
+        "redujo 0.7 horas (6.9 h) con una puntuacion de sueno de 74.0 (caida de "
+        "8.0 puntos), y el readiness promedio solo 38.0."
+    )
+    assert verificar_atribucion(texto, COMPLETO) == []
+
+
+def test_la_enumeracion_de_dinamica_completa_no_da_falsos_positivos():
+    """El prompt pide justo esta enumeracion, asi que aparece todas las semanas."""
+    texto = (
+        "En dinamica de carrera, la cadencia aumento 4.8 pasos por minuto "
+        "respecto a la semana anterior (ahora 175.8), el ground contact time "
+        "mejoro con una reduccion de 8.0 ms (232.0 ms), la oscilacion vertical "
+        "crecio 0.3 cm (8.4 cm) y el ratio vertical aumento 0.3 puntos (7.9%)."
+    )
+    assert verificar_atribucion(texto, COMPLETO) == []
+
+
+def test_el_numero_delante_del_nombre_sigue_detectandose():
+    """La regla de la coma no puede tapar el caso que motivo mirar adelante."""
+    assert verificar_atribucion("un 104.1% de adherencia", PRODUCCION)
+    assert verificar_atribucion("un 75.0% de adherencia", PRODUCCION) == []
+
+
+def test_monotonia_con_acento_se_reconoce():
+    """El modelo escribe espanol correcto; sin el acento en el patron, la
+    metrica dejaba de estar cubierta EN SILENCIO."""
+    # 1.72 es el ACWR, no el Monotony: la confusion tiene que salir.
+    assert verificar_atribucion("La monotonia de 1.72 indica variabilidad.", COMPLETO)
+    assert verificar_atribucion("La monotonia de 0.97 indica variabilidad.", COMPLETO) == []
+
+
+def test_ground_contact_time_se_reconoce_como_gct():
+    """Es como lo escribio el modelo, en ingles, en la primera prueba real."""
+    # 8.4 es la oscilacion vertical, no el GCT.
+    assert verificar_atribucion("El ground contact time fue 8.4 ms.", COMPLETO)
+    assert verificar_atribucion("El ground contact time fue 232.0 ms.", COMPLETO) == []

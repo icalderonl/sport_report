@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import statistics
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Any, Sequence
 
 from .. import config

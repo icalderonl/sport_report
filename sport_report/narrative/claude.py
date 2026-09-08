@@ -185,8 +185,33 @@ _VENTANA = 24
 _RE_HUECO_MALO = re.compile(r"[\d\n.;]")
 
 
-def _hueco_valido(hueco: str) -> bool:
-    return len(hueco) <= _VENTANA and not _RE_HUECO_MALO.search(hueco)
+# Mirando hacia adelante (el numero primero, el nombre despues) se prohiben
+# ademas el parentesis de cierre y la coma. Motivo, con dos frases reales del
+# modelo en la primera prueba contra la API:
+#
+#   "el ground contact time mejoro con una reduccion de 8.0 ms (232.0 ms),
+#    pero la oscilacion vertical crecio 0.3 cm (8.4 cm) y el ratio vertical..."
+#   "el HRV bajo 8.0 ms hasta 62.0 ms, la frecuencia cardiaca de reposo
+#    subio 2.0 lpm (50.0 lpm)"
+#
+# El patron es el mismo en las dos: el numero pertenece a una metrica cuyo
+# nombre queda descartado por el digito que hay en medio (el delta), y el
+# siguiente nombre esta a pocos caracteres. Sin esta regla el numero se le
+# colgaba a la metrica SIGUIENTE y se reportaba una confusion que no existia; y
+# como el aviso sube al reporte del atleta, el sistema le decia todas las
+# semanas que no se fiara de cifras correctas.
+#
+# Un parentesis que cierra, y una coma, pertenecen a lo que vino ANTES. Hacia
+# atras la coma si se deja pasar ("la carga semanal, que fue 558.2"): ahi el
+# nombre ya esta dicho y la coma no lo separa de su cifra.
+_RE_HUECO_MALO_ADELANTE = re.compile(r"[\d\n.;),]")
+
+
+def _hueco_valido(hueco: str, hacia_adelante: bool = False) -> bool:
+    if len(hueco) > _VENTANA:
+        return False
+    malo = _RE_HUECO_MALO_ADELANTE if hacia_adelante else _RE_HUECO_MALO
+    return not malo.search(hueco)
 
 
 # (nombre legible, como aparece en el texto, rutas del JSON que puede citar)
@@ -204,7 +229,9 @@ METRICAS: tuple[tuple[str, re.Pattern[str], tuple[tuple[str, ...], ...]], ...] =
     ),
     (
         "Monotony",
-        re.compile(r"monoton[iy]a?", re.I),
+        # Con acento: el modelo escribe "monotonia" en espanol correcto y
+        # `monoton[iy]a?` no lo alcanzaba, asi que la metrica quedaba sin cubrir.
+        re.compile(r"monoton[iíy]a?", re.I),
         (("monotony", "monotony"), ("umbrales", "monotony_alta")),
     ),
     ("Strain", re.compile(r"strain", re.I), (("monotony", "strain"),)),
@@ -230,7 +257,9 @@ METRICAS: tuple[tuple[str, re.Pattern[str], tuple[tuple[str, ...], ...]], ...] =
     ),
     (
         "GCT",
-        re.compile(r"\bGCT\b|tiempo de contacto", re.I),
+        # "ground contact time" incluido: es como lo escribio el modelo en la
+        # primera prueba real contra la API.
+        re.compile(r"\bGCT\b|tiempo de contacto|ground contact( time)?", re.I),
         (
             ("gct", "valor"),
             ("gct", "semana_anterior"),
@@ -418,13 +447,15 @@ def _metrica_mas_cercana(
     """
     mejor: tuple[int, int] | None = None  # (distancia, indice)
     for inicio, fin, indice in apariciones:
+        adelante = False
         if fin <= num.start():  # el nombre va delante del numero
             hueco = texto[fin : num.start()]
         elif num.end() <= inicio:  # el numero va delante del nombre
             hueco = texto[num.end() : inicio]
+            adelante = True
         else:  # se solapan (un numero dentro del nombre): no aplica
             continue
-        if not _hueco_valido(hueco):
+        if not _hueco_valido(hueco, hacia_adelante=adelante):
             continue
         if mejor is None or len(hueco) < mejor[0]:
             mejor = (len(hueco), indice)

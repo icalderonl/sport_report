@@ -10,7 +10,6 @@ from datetime import date, timedelta
 
 import pytest
 
-from sport_report import config
 from sport_report.db.models import BienestarDia, SesionReal
 from sport_report.db.repo import Repo
 from sport_report.engine import report

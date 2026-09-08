@@ -7,11 +7,11 @@ fuente no trajo tiene que quedar en `None`.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 import pytest
 
-from sport_report.config import TZ, Carga
+from sport_report.config import Carga
 from sport_report.db.repo import Repo
 from sport_report.fechas import semana_de
 from sport_report.intervals.errors import IntervalsError

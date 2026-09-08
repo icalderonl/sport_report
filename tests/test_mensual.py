@@ -26,7 +26,7 @@ from sport_report.narrative.mensual import (
     SISTEMA_MENSUAL,
     redactar_mensual,
 )
-from sport_report.narrative.claude import verificar_atribucion, verificar_cifras
+from sport_report.narrative.claude import verificar_atribucion
 from sport_report.plan.carrera import Carrera, CarreraStore
 from sport_report.plan.grammar import parse_plan
 from sport_report.plan.store import PlanStore

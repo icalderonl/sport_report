@@ -21,7 +21,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any
 
 from .. import config
 from ..db.repo import Repo

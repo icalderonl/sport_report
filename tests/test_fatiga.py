@@ -9,8 +9,6 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-import pytest
-
 from sport_report.config import Bienestar
 from sport_report.db.models import BienestarDia
 from sport_report.engine import fatiga
