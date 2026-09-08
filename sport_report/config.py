@@ -108,3 +108,8 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
 
 TIPOS_RUN = ("Run", "TrailRun", "VirtualRun")
 TIPOS_FUERZA = ("WeightTraining", "Workout", "Crossfit")
+
+# Origenes de zonas de HR que se consideran datos del atleta. Cualquier otro
+# (hoy solo 'fallback') implica carga ponderada con peso plano, que el reporte
+# debe marcar como imprecisa.
+ORIGENES_ZONAS_CONFIABLES = ("intervals", "strava")
