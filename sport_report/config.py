@@ -97,6 +97,23 @@ ESTIMACION = Estimacion()
 # Semanas que muestra el grafico de volumen del reporte.
 SEMANAS_GRAFICO = 16
 
+# --- intervals.icu: la fuente principal (fase 2) ---
+# Clave personal (Settings -> Developer Settings). No expira ni rota: se copia
+# al .env por scp y no se teclea en la Pi.
+INTERVALS_API_KEY = os.getenv("INTERVALS_API_KEY", "")
+# '0' es la convencion de "el atleta autenticado". Si no funciona,
+# `python -m sport_report.intervals.verificar` imprime el id real.
+INTERVALS_ATHLETE_ID = os.getenv("INTERVALS_ATHLETE_ID", "0")
+INTERVALS_BASE = os.getenv("INTERVALS_BASE", "https://intervals.icu/api/v1")
+
+INTERVALS = "intervals"
+STRAVA = "strava"
+# Cual fuente se intenta primero. Con 'intervals', Strava queda como respaldo y
+# solo se usa si intervals.icu falla. Con 'strava' forzado NO hay respaldo:
+# intervals.icu nunca respalda a Strava (no hay respaldo del respaldo).
+FUENTE_PRINCIPAL = os.getenv("FUENTE_PRINCIPAL", INTERVALS)
+
+# --- Strava: solo respaldo (fase 2) ---
 STRAVA_CLIENT_ID = os.getenv("STRAVA_CLIENT_ID", "")
 STRAVA_CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET", "")
 # Solo bootstrap de la primera corrida: despues manda data/tokens.json.
