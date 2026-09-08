@@ -217,7 +217,7 @@ class IngestaBase:
             vueltas_ok = False
             if es_run:
                 aid = self._id(act)
-                previa = self.repo.sesion(aid)
+                previa = self.repo.sesion(self.NOMBRE, aid)
                 nueva = previa is None or forzar
                 if not nueva and previa.streams_procesados and previa.vueltas_procesadas:
                     # Ya procesada: no gastar cuota en volver a bajar el stream.
@@ -235,7 +235,7 @@ class IngestaBase:
                     # guardaron. Re-normalizarla obligaria a bajar de nuevo el
                     # stream para no perder la carga, que es la llamada cara que
                     # se esta evitando; basta con mover la bandera.
-                    self.repo.marcar_vueltas_procesadas(aid, vueltas_ok)
+                    self.repo.marcar_vueltas_procesadas(self.NOMBRE, aid, vueltas_ok)
                     resumen.reutilizadas += 1
                     self._marcar_si_fuerza(act, es_fuerza, resumen)
                     continue
@@ -281,7 +281,7 @@ class IngestaBase:
             log.warning("vueltas de %s fallaron: %s", actividad_id, exc)
             return False
         vueltas = self._normalizar_vueltas(actividad_id, crudas)
-        self.repo.guardar_vueltas(actividad_id, vueltas)
+        self.repo.guardar_vueltas(self.NOMBRE, actividad_id, vueltas)
         if not vueltas:
             resumen.sin_vueltas += 1
         return True

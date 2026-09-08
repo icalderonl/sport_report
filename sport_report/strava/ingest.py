@@ -48,7 +48,7 @@ class Ingesta(IngestaBase):
     def _normalizar_vueltas(
         self, actividad_id: int, crudas: list[dict[str, Any]]
     ) -> list[Any]:
-        return metricas.normalizar_vueltas(actividad_id, crudas)
+        return metricas.normalizar_vueltas(self.NOMBRE, actividad_id, crudas)
 
     def _zonas_remotas(self) -> list[dict[str, int]] | None:
         return self.cliente.zonas_hr()
@@ -86,11 +86,12 @@ class Ingesta(IngestaBase):
             deriva = metricas.deriva_cardiaca(streams, self.carga.decoupling_min_puntos)
 
         return SesionReal(
-            strava_id=int(act["id"]),
+            fuente=self.NOMBRE,
+            id_externo=str(act["id"]),
             fecha_utc=local.astimezone(timezone.utc).isoformat(timespec="seconds"),
             fecha_local=local.date().isoformat(),
             dia_semana=letra_dia(local.date()),
-            tipo_strava=tipo,
+            tipo=tipo,
             es_fuerza=es_fuerza,
             nombre=act.get("name"),
             distancia_km=metricas.distancia_km(act) if not es_fuerza else None,

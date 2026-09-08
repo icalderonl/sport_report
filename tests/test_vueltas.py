@@ -18,7 +18,7 @@ SERIES = (2.0, 1.0, 1.0, 1.0, 0.4, 0.4, 0.4, 0.4, 2.0)
 
 def vs(*pares: tuple[float, int]) -> list[Vuelta]:
     """(km, segundos) -> vueltas numeradas desde 1, en orden."""
-    return [Vuelta(1, i + 1, km, s) for i, (km, s) in enumerate(pares)]
+    return [Vuelta("strava", "1", i + 1, km, s) for i, (km, s) in enumerate(pares)]
 
 
 # --------------------------------------------------------------------------
@@ -185,11 +185,11 @@ def test_normalizar_descarta_las_vueltas_inservibles():
         "no es un dict",
     ]
 
-    assert [v.indice for v in normalizar_vueltas(9, crudas)] == [1, 5]
+    assert [v.indice for v in normalizar_vueltas("strava", "9", crudas)] == [1, 5]
 
 
 def test_normalizar_cae_a_elapsed_time_si_no_hay_moving():
-    v = normalizar_vueltas(9, [{"lap_index": 1, "distance": 400.0, "elapsed_time": 95}])
+    v = normalizar_vueltas("strava", "9", [{"lap_index": 1, "distance": 400.0, "elapsed_time": 95}])
 
     assert v[0].duracion_mov_s == 95
 
@@ -200,12 +200,12 @@ def test_normalizar_ordena_por_indice():
         {"lap_index": 1, "distance": 2000.0, "moving_time": 800},
     ]
 
-    assert [v.indice for v in normalizar_vueltas(9, crudas)] == [1, 3]
+    assert [v.indice for v in normalizar_vueltas("strava", "9", crudas)] == [1, 3]
 
 
 def test_el_ritmo_de_una_vuelta():
-    assert Vuelta(1, 1, 0.4, 84).ritmo_s_km == pytest.approx(210.0)
-    assert Vuelta(1, 1, 0.0, 84).ritmo_s_km is None
+    assert Vuelta("strava", "1", 1, 0.4, 84).ritmo_s_km == pytest.approx(210.0)
+    assert Vuelta("strava", "1", 1, 0.0, 84).ritmo_s_km is None
 
 
 # --------------------------------------------------------------------------
@@ -245,12 +245,12 @@ def test_una_base_vieja_gana_la_tabla_y_la_bandera(tmp_path):
     con.close()
 
     with Repo(vieja) as r:
-        assert r.sesion(1).streams_procesados is True
-        assert r.sesion(1).vueltas_procesadas is False
-        r.guardar_vueltas(1, [Vuelta(1, 1, 2.0, 800)])
-        assert len(r.vueltas(1)) == 1
+        assert r.sesion("strava", "1").streams_procesados is True
+        assert r.sesion("strava", "1").vueltas_procesadas is False
+        r.guardar_vueltas("strava", "1", [Vuelta("strava", "1", 1, 2.0, 800)])
+        assert len(r.vueltas("strava", "1")) == 1
     with Repo(vieja) as r:  # reabrir no vuelve a migrar ni pierde nada
-        assert len(r.vueltas(1)) == 1
+        assert len(r.vueltas("strava", "1")) == 1
 
 
 def test_reingerir_una_sesion_no_se_lleva_sus_vueltas(tmp_path):
@@ -260,9 +260,9 @@ def test_reingerir_una_sesion_no_se_lleva_sus_vueltas(tmp_path):
     from tests.test_engine import sesion
 
     with Repo(tmp_path / "t.db") as r:
-        r.guardar_sesion(sesion(3, strava_id=1003, distancia_km=10.0))
-        r.guardar_vueltas(1003, [Vuelta(1003, 1, 2.0, 800), Vuelta(1003, 2, 1.0, 240)])
+        r.guardar_sesion(sesion(3, fuente="strava", id_externo="1003", distancia_km=10.0))
+        r.guardar_vueltas("strava", "1003", [Vuelta("strava", "1003", 1, 2.0, 800), Vuelta("strava", "1003", 2, 1.0, 240)])
 
-        r.guardar_sesion(sesion(3, strava_id=1003, distancia_km=10.1))
+        r.guardar_sesion(sesion(3, fuente="strava", id_externo="1003", distancia_km=10.1))
 
-        assert len(r.vueltas(1003)) == 2
+        assert len(r.vueltas("strava", "1003")) == 2

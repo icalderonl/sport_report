@@ -43,11 +43,12 @@ D: long 16km @6:15/5:45 Z2
 def sesion(dia_offset: int, **kw) -> SesionReal:
     f = LUNES + timedelta(days=dia_offset)
     base = dict(
-        strava_id=2000 + dia_offset,
+        fuente="strava",
+        id_externo=str(2000 + dia_offset),
         fecha_utc=f"{f}T12:00:00+00:00",
         fecha_local=f.isoformat(),
         dia_semana="LMWJVSD"[dia_offset],
-        tipo_strava="Run",
+        tipo="Run",
         es_fuerza=False,
         distancia_km=10.0,
         duracion_mov_s=3000,
@@ -211,7 +212,7 @@ def test_volumen_semanal_ignora_sesiones_sin_distancia(tmp_path):
     repo = Repo(tmp_path / "t.db")
     try:
         repo.guardar_sesion(sesion(0, distancia_km=10.0))
-        repo.guardar_sesion(sesion(1, distancia_km=None, tipo_strava="WeightTraining"))
+        repo.guardar_sesion(sesion(1, distancia_km=None, tipo="WeightTraining"))
         assert repo.volumen_semanal(DOMINGO, 1) == [(LUNES, 10.0)]
     finally:
         repo.cerrar()

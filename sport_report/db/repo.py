@@ -8,18 +8,19 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .. import config
-from .models import SesionReal, Vuelta
+from .models import BienestarDia, SesionReal, Vuelta
 
 log = logging.getLogger(__name__)
 
 RUTA_SCHEMA = Path(__file__).with_name("schema.sql")
 
 _CAMPOS = (
-    "strava_id",
+    "fuente",
+    "id_externo",
     "fecha_utc",
     "fecha_local",
     "dia_semana",
-    "tipo_strava",
+    "tipo",
     "es_fuerza",
     "nombre",
     "distancia_km",
@@ -29,11 +30,28 @@ _CAMPOS = (
     "hr_maximo",
     "cadencia_spm",
     "potencia_w",
+    "gct_ms",
+    "oscilacion_vertical_cm",
+    "ratio_vertical_pct",
     "decoupling_pct",
     "carga",
     "carga_impreciso",
     "streams_procesados",
     "vueltas_procesadas",
+)
+
+_BANDERAS = ("es_fuerza", "carga_impreciso", "streams_procesados", "vueltas_procesadas")
+
+_CAMPOS_BIENESTAR = (
+    "fecha_local",
+    "hrv",
+    "hr_reposo",
+    "sueno_h",
+    "sueno_score",
+    "readiness",
+    "body_battery",
+    "fuente",
+    "crudo",
 )
 
 # Columnas agregadas despues de la primera version del esquema. `CREATE TABLE
@@ -57,6 +75,82 @@ _MIGRACIONES = (
     ),
 )
 
+# Reconstruccion de tabla: lo que `_MIGRACIONES` no puede hacer. `strava_id
+# INTEGER PRIMARY KEY` es un alias de rowid y no acepta el id textual de
+# intervals.icu, asi que la tabla se crea de nuevo y se copia. Cada entrada es
+# (columna centinela, tabla, script); si la centinela ya existe, no se hace
+# nada, y por eso reabrir la base no vuelve a migrar.
+#
+# Todo el historico queda con fuente='strava': era la unica fuente que existia.
+_SQL_SESIONES_V2 = """
+CREATE TABLE sesiones_v2 (
+    fuente TEXT NOT NULL, id_externo TEXT NOT NULL,
+    fecha_utc TEXT NOT NULL, fecha_local TEXT NOT NULL, dia_semana TEXT NOT NULL,
+    tipo TEXT NOT NULL, es_fuerza INTEGER NOT NULL DEFAULT 0, nombre TEXT,
+    distancia_km REAL, duracion_mov_s INTEGER, duracion_tot_s INTEGER,
+    hr_promedio REAL, hr_maximo REAL, cadencia_spm REAL, potencia_w REAL,
+    gct_ms REAL, oscilacion_vertical_cm REAL, ratio_vertical_pct REAL,
+    decoupling_pct REAL, carga REAL, carga_impreciso INTEGER NOT NULL DEFAULT 0,
+    streams_procesados INTEGER NOT NULL DEFAULT 0,
+    vueltas_procesadas INTEGER NOT NULL DEFAULT 0,
+    ingerido_en TEXT NOT NULL,
+    PRIMARY KEY (fuente, id_externo)
+);
+INSERT INTO sesiones_v2 (
+    fuente, id_externo, fecha_utc, fecha_local, dia_semana, tipo, es_fuerza,
+    nombre, distancia_km, duracion_mov_s, duracion_tot_s, hr_promedio,
+    hr_maximo, cadencia_spm, potencia_w, decoupling_pct, carga, carga_impreciso,
+    streams_procesados, vueltas_procesadas, ingerido_en)
+SELECT
+    'strava', CAST(strava_id AS TEXT), fecha_utc, fecha_local, dia_semana,
+    tipo_strava, es_fuerza, nombre, distancia_km, duracion_mov_s,
+    duracion_tot_s, hr_promedio, hr_maximo, cadencia_spm, potencia_w,
+    decoupling_pct, carga, carga_impreciso, streams_procesados,
+    vueltas_procesadas, ingerido_en
+FROM sesiones;
+DROP TABLE sesiones;
+ALTER TABLE sesiones_v2 RENAME TO sesiones;
+"""
+
+_SQL_VUELTAS_V2 = """
+CREATE TABLE vueltas_v2 (
+    fuente TEXT NOT NULL, id_externo TEXT NOT NULL, indice INTEGER NOT NULL,
+    distancia_km REAL NOT NULL, duracion_mov_s INTEGER NOT NULL,
+    PRIMARY KEY (fuente, id_externo, indice)
+);
+INSERT INTO vueltas_v2 (fuente, id_externo, indice, distancia_km, duracion_mov_s)
+SELECT 'strava', CAST(strava_id AS TEXT), indice, distancia_km, duracion_mov_s
+FROM vueltas;
+DROP TABLE vueltas;
+ALTER TABLE vueltas_v2 RENAME TO vueltas;
+"""
+
+_MIGRACIONES_TABLA = (
+    ("id_externo", "sesiones", _SQL_SESIONES_V2),
+    ("id_externo", "vueltas", _SQL_VUELTAS_V2),
+)
+
+# Con dos fuentes, la misma actividad puede estar dos veces. La regla es: por
+# dia local manda una sola fuente, la de mayor rango, y las filas de la otra no
+# se suman. Sin esto el volumen y la carga de una semana ingerida por ambas
+# fuentes saldrian al doble.
+#
+# El orden es fijo y no sale de la configuracion a proposito: intervals.icu
+# gana porque su registro es el completo (trae GCT, oscilacion y ratio
+# vertical). Que alguien cambie FUENTE_PRINCIPAL no debe reinterpretar el
+# historico ya guardado.
+_ORDEN_FUENTES = "CASE s2.fuente WHEN 'intervals' THEN 0 WHEN 'strava' THEN 1 ELSE 2 END"
+
+
+def _preferencia(alias: str = "sesiones") -> str:
+    """Condicion SQL que deja pasar solo la fuente que manda ese dia."""
+    return (
+        f"{alias}.fuente = (SELECT s2.fuente FROM sesiones s2 "
+        f"WHERE s2.fecha_local = {alias}.fecha_local "
+        f"ORDER BY {_ORDEN_FUENTES}, s2.fuente LIMIT 1)"
+    )
+
+
 # Horas tras las cuales una corrida `en_curso` se da por muerta. El servicio
 # semanal tiene TimeoutStartSec=30min, asi que 6 horas no puede pisar una viva.
 _HORAS_CORRIDA_MUERTA = 6
@@ -76,15 +170,23 @@ class Repo:
         self._init_schema()
 
     def _init_schema(self) -> None:
+        # El orden importa: la reconstruccion va ANTES del schema porque
+        # `CREATE INDEX ... ON sesiones(fuente, ...)` no puede correr sobre una
+        # tabla vieja que todavia no tiene esa columna.
+        self._migrar_tablas()
         self.con.executescript(RUTA_SCHEMA.read_text(encoding="utf-8"))
         self._migrar()
         self.con.commit()
 
+    def _columnas(self, tabla: str) -> set[str]:
+        """Columnas de `tabla`, o vacio si la tabla no existe."""
+        return {f["name"] for f in self.con.execute(f"PRAGMA table_info({tabla})").fetchall()}
+
     def _migrar(self) -> None:
         """Agrega columnas nuevas a una base que ya existia. Idempotente."""
-        existentes = {
-            f["name"] for f in self.con.execute("PRAGMA table_info(sesiones)").fetchall()
-        }
+        existentes = self._columnas("sesiones")
+        if not existentes:
+            return
         for columna, definicion, relleno in _MIGRACIONES:
             if columna in existentes:
                 continue
@@ -92,6 +194,27 @@ class Repo:
             self.con.execute(f"ALTER TABLE sesiones ADD COLUMN {columna} {definicion}")
             if relleno:
                 self.con.execute(relleno)
+
+    def _migrar_tablas(self) -> None:
+        """Reconstruye las tablas cuya clave primaria cambio. Idempotente.
+
+        Es la unica operacion destructiva del esquema, asi que va en una sola
+        transaccion: o queda la tabla nueva completa, o no se toca nada. El
+        runbook exige un respaldo antes de desplegar esto.
+        """
+        pendientes = [
+            (tabla, script)
+            for centinela, tabla, script in _MIGRACIONES_TABLA
+            if (cols := self._columnas(tabla)) and centinela not in cols
+        ]
+        if not pendientes:
+            return
+        # Las columnas que `_MIGRACIONES` agrega tienen que existir antes de
+        # copiar: una base anterior a ellas no las trae y el SELECT fallaria.
+        self._migrar()
+        for tabla, script in pendientes:
+            log.warning("migrando la base: reconstruyendo %s con (fuente, id_externo)", tabla)
+            self.con.executescript(f"BEGIN;\n{script}\nCOMMIT;")
 
     def cerrar(self) -> None:
         self.con.close()
@@ -105,7 +228,7 @@ class Repo:
     # -- sesiones --------------------------------------------------------
 
     def guardar_sesion(self, s: SesionReal) -> None:
-        """Upsert por strava_id: reingerir la misma semana no duplica ni pierde."""
+        """Upsert por (fuente, id_externo): reingerir no duplica ni pierde."""
         valores = [getattr(s, c) for c in _CAMPOS]
         valores = [int(v) if isinstance(v, bool) else v for v in valores]
         columnas = ", ".join(_CAMPOS)
@@ -126,20 +249,26 @@ class Repo:
 
     def _fila_a_sesion(self, f: sqlite3.Row) -> SesionReal:
         d = {c: f[c] for c in _CAMPOS}
-        for bandera in ("es_fuerza", "carga_impreciso", "streams_procesados", "vueltas_procesadas"):
+        d["id_externo"] = str(d["id_externo"])
+        for bandera in _BANDERAS:
             d[bandera] = bool(d[bandera])
         return SesionReal(**d)
 
-    def sesion(self, strava_id: int) -> SesionReal | None:
+    def sesion(self, fuente: str, id_externo: Any) -> SesionReal | None:
         f = self.con.execute(
-            "SELECT * FROM sesiones WHERE strava_id = ?", (strava_id,)
+            "SELECT * FROM sesiones WHERE fuente = ? AND id_externo = ?",
+            (fuente, str(id_externo)),
         ).fetchone()
         return self._fila_a_sesion(f) if f else None
 
     def sesiones_entre(self, desde: date, hasta: date) -> list[SesionReal]:
-        """Sesiones con fecha_local en [desde, hasta], ambos inclusive."""
+        """Sesiones con fecha_local en [desde, hasta], ambos inclusive.
+
+        Solo las de la fuente que manda cada dia (ver `_preferencia`).
+        """
         filas = self.con.execute(
             "SELECT * FROM sesiones WHERE fecha_local BETWEEN ? AND ? "
+            f"AND {_preferencia()} "
             "ORDER BY fecha_local, fecha_utc",
             (desde.isoformat(), hasta.isoformat()),
         ).fetchall()
@@ -154,6 +283,7 @@ class Repo:
         filas = self.con.execute(
             "SELECT fecha_local, SUM(carga) AS total FROM sesiones "
             "WHERE fecha_local BETWEEN ? AND ? AND carga IS NOT NULL "
+            f"AND {_preferencia()} "
             "GROUP BY fecha_local",
             (desde.isoformat(), hasta.isoformat()),
         ).fetchall()
@@ -162,7 +292,8 @@ class Repo:
     def dias_con_datos(self, desde: date, hasta: date) -> int:
         f = self.con.execute(
             "SELECT COUNT(DISTINCT fecha_local) AS n FROM sesiones "
-            "WHERE fecha_local BETWEEN ? AND ? AND carga IS NOT NULL",
+            "WHERE fecha_local BETWEEN ? AND ? AND carga IS NOT NULL "
+            f"AND {_preferencia()}",
             (desde.isoformat(), hasta.isoformat()),
         ).fetchone()
         return int(f["n"])
@@ -184,7 +315,7 @@ class Repo:
         filas = self.con.execute(
             "SELECT fecha_local, distancia_km FROM sesiones "
             "WHERE fecha_local BETWEEN ? AND ? AND distancia_km IS NOT NULL "
-            f"AND tipo_strava IN ({marcas})",
+            f"AND tipo IN ({marcas}) AND {_preferencia()}",
             (
                 inicio.isoformat(),
                 (lunes_final + timedelta(days=6)).isoformat(),
@@ -208,24 +339,35 @@ class Repo:
 
     # -- vueltas ---------------------------------------------------------
 
-    def guardar_vueltas(self, strava_id: int, vueltas: Iterable[Vuelta]) -> int:
+    def guardar_vueltas(
+        self, fuente: str, id_externo: Any, vueltas: Iterable[Vuelta]
+    ) -> int:
         """Reemplaza las vueltas de una actividad. Idempotente.
 
-        Se borran primero las que hubiera: si Strava devuelve menos vueltas que
-        antes (el atleta edito la actividad) dejar las viejas mezclaria dos
+        Se borran primero las que hubiera: si la fuente devuelve menos vueltas
+        que antes (el atleta edito la actividad) dejar las viejas mezclaria dos
         versiones de la misma sesion.
         """
-        filas = [(v.strava_id, v.indice, v.distancia_km, v.duracion_mov_s) for v in vueltas]
-        self.con.execute("DELETE FROM vueltas WHERE strava_id = ?", (strava_id,))
+        id_externo = str(id_externo)
+        filas = [
+            (v.fuente, v.id_externo, v.indice, v.distancia_km, v.duracion_mov_s)
+            for v in vueltas
+        ]
+        self.con.execute(
+            "DELETE FROM vueltas WHERE fuente = ? AND id_externo = ?",
+            (fuente, id_externo),
+        )
         self.con.executemany(
-            "INSERT INTO vueltas (strava_id, indice, distancia_km, duracion_mov_s) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO vueltas (fuente, id_externo, indice, distancia_km, duracion_mov_s) "
+            "VALUES (?, ?, ?, ?, ?)",
             filas,
         )
         self.con.commit()
         return len(filas)
 
-    def marcar_vueltas_procesadas(self, strava_id: int, valor: bool = True) -> None:
+    def marcar_vueltas_procesadas(
+        self, fuente: str, id_externo: Any, valor: bool = True
+    ) -> None:
         """Marca la bandera sin volver a escribir la sesion entera.
 
         Cuando a una fila ya ingerida solo le faltaban las vueltas no hay que
@@ -233,46 +375,49 @@ class Repo:
         perder la carga, que es justo la llamada cara que se quiere evitar.
         """
         self.con.execute(
-            "UPDATE sesiones SET vueltas_procesadas = ? WHERE strava_id = ?",
-            (int(valor), strava_id),
+            "UPDATE sesiones SET vueltas_procesadas = ? "
+            "WHERE fuente = ? AND id_externo = ?",
+            (int(valor), fuente, str(id_externo)),
         )
         self.con.commit()
 
-    def vueltas(self, strava_id: int) -> list[Vuelta]:
-        filas = self.con.execute(
-            "SELECT * FROM vueltas WHERE strava_id = ? ORDER BY indice", (strava_id,)
-        ).fetchall()
-        return [
-            Vuelta(
-                strava_id=int(f["strava_id"]),
-                indice=int(f["indice"]),
-                distancia_km=float(f["distancia_km"]),
-                duracion_mov_s=int(f["duracion_mov_s"]),
-            )
-            for f in filas
-        ]
+    def _fila_a_vuelta(self, f: sqlite3.Row) -> Vuelta:
+        return Vuelta(
+            fuente=f["fuente"],
+            id_externo=str(f["id_externo"]),
+            indice=int(f["indice"]),
+            distancia_km=float(f["distancia_km"]),
+            duracion_mov_s=int(f["duracion_mov_s"]),
+        )
 
-    def vueltas_entre(self, desde: date, hasta: date) -> dict[int, list[Vuelta]]:
+    def vueltas(self, fuente: str, id_externo: Any) -> list[Vuelta]:
+        filas = self.con.execute(
+            "SELECT * FROM vueltas WHERE fuente = ? AND id_externo = ? ORDER BY indice",
+            (fuente, str(id_externo)),
+        ).fetchall()
+        return [self._fila_a_vuelta(f) for f in filas]
+
+    def vueltas_entre(
+        self, desde: date, hasta: date
+    ) -> dict[tuple[str, str], list[Vuelta]]:
         """Vueltas de todas las sesiones de la ventana, agrupadas por actividad.
 
-        Una sola consulta: el motor de adherencia las necesita todas de golpe y
+        La clave es `SesionReal.clave`, o sea (fuente, id_externo). Una sola
+        consulta: el motor de adherencia las necesita todas de golpe y
         preguntar sesion por sesion son N viajes a la base por reporte.
         """
         filas = self.con.execute(
-            "SELECT v.* FROM vueltas v JOIN sesiones s ON s.strava_id = v.strava_id "
-            "WHERE s.fecha_local BETWEEN ? AND ? ORDER BY v.strava_id, v.indice",
+            "SELECT v.* FROM vueltas v JOIN sesiones s "
+            "ON s.fuente = v.fuente AND s.id_externo = v.id_externo "
+            "WHERE s.fecha_local BETWEEN ? AND ? "
+            f"AND {_preferencia('s')} "
+            "ORDER BY v.fuente, v.id_externo, v.indice",
             (desde.isoformat(), hasta.isoformat()),
         ).fetchall()
-        salida: dict[int, list[Vuelta]] = {}
+        salida: dict[tuple[str, str], list[Vuelta]] = {}
         for f in filas:
-            salida.setdefault(int(f["strava_id"]), []).append(
-                Vuelta(
-                    strava_id=int(f["strava_id"]),
-                    indice=int(f["indice"]),
-                    distancia_km=float(f["distancia_km"]),
-                    duracion_mov_s=int(f["duracion_mov_s"]),
-                )
-            )
+            v = self._fila_a_vuelta(f)
+            salida.setdefault(v.clave, []).append(v)
         return salida
 
     # -- zonas -----------------------------------------------------------
@@ -290,7 +435,7 @@ class Repo:
     def zonas(self) -> tuple[list[dict[str, int]] | None, str | None]:
         """Devuelve (zonas, origen). zonas es None si el origen fue el fallback."""
         f = self.con.execute("SELECT * FROM zonas_hr WHERE id = 1").fetchone()
-        if not f or f["origen"] != "strava":
+        if not f or f["origen"] not in config.ORIGENES_ZONAS_CONFIABLES:
             return None, (f["origen"] if f else None)
         maximos = [f[f"z{i}_max"] for i in range(1, 6)]
         if any(m is None for m in maximos):
@@ -300,7 +445,71 @@ class Repo:
         for m in maximos:
             zonas.append({"min": anterior, "max": int(m)})
             anterior = int(m)
-        return zonas, "strava"
+        return zonas, f["origen"]
+
+    # -- bienestar -------------------------------------------------------
+
+    def guardar_bienestar(self, dias: Iterable[BienestarDia]) -> int:
+        """Upsert por fecha local. Solo intervals.icu llena esta tabla."""
+        filas = [
+            [getattr(d, c) for c in _CAMPOS_BIENESTAR] + [_ahora_utc()] for d in dias
+        ]
+        if not filas:
+            return 0
+        columnas = ", ".join(_CAMPOS_BIENESTAR)
+        marcas = ", ".join("?" * len(_CAMPOS_BIENESTAR))
+        self.con.executemany(
+            f"INSERT OR REPLACE INTO bienestar ({columnas}, actualizado) "
+            f"VALUES ({marcas}, ?)",
+            filas,
+        )
+        self.con.commit()
+        return len(filas)
+
+    def bienestar_entre(self, desde: date, hasta: date) -> list[BienestarDia]:
+        filas = self.con.execute(
+            "SELECT * FROM bienestar WHERE fecha_local BETWEEN ? AND ? "
+            "ORDER BY fecha_local",
+            (desde.isoformat(), hasta.isoformat()),
+        ).fetchall()
+        return [
+            BienestarDia(**{c: f[c] for c in _CAMPOS_BIENESTAR}) for f in filas
+        ]
+
+    # -- fuente por semana -----------------------------------------------
+
+    def guardar_fuente_semana(
+        self, semana: str, fuente: str, fallback: bool = False, detalle: str = ""
+    ) -> None:
+        self.con.execute(
+            "INSERT OR REPLACE INTO fuentes_semana "
+            "(semana, fuente, fallback, detalle, actualizado) VALUES (?, ?, ?, ?, ?)",
+            (semana, fuente, int(fallback), detalle[:4000], _ahora_utc()),
+        )
+        self.con.commit()
+
+    def fuente_semana(self, semana: str) -> dict[str, Any] | None:
+        f = self.con.execute(
+            "SELECT * FROM fuentes_semana WHERE semana = ?", (semana,)
+        ).fetchone()
+        if not f:
+            return None
+        d = dict(f)
+        d["fallback"] = bool(d["fallback"])
+        return d
+
+    def fuentes_entre(self, desde: str, hasta: str) -> list[dict[str, Any]]:
+        """Filas de `fuentes_semana` con clave (lunes ISO) en [desde, hasta]."""
+        filas = self.con.execute(
+            "SELECT * FROM fuentes_semana WHERE semana BETWEEN ? AND ? ORDER BY semana",
+            (desde, hasta),
+        ).fetchall()
+        salida = []
+        for f in filas:
+            d = dict(f)
+            d["fallback"] = bool(d["fallback"])
+            salida.append(d)
+        return salida
 
     # -- corridas --------------------------------------------------------
 

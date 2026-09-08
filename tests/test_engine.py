@@ -130,11 +130,12 @@ def test_foster_solo_mira_su_ventana_de_7_dias():
 def sesion(dia_offset: int, **kw) -> SesionReal:
     f = LUNES + timedelta(days=dia_offset)
     base = dict(
-        strava_id=1000 + dia_offset,
+        fuente="strava",
+        id_externo=str(1000 + dia_offset),
         fecha_utc=f"{f}T12:00:00+00:00",
         fecha_local=f.isoformat(),
         dia_semana="LMWJVSD"[dia_offset],
-        tipo_strava="Run",
+        tipo="Run",
         es_fuerza=False,
         distancia_km=10.0,
         duracion_mov_s=3000,
@@ -147,15 +148,15 @@ def sesion(dia_offset: int, **kw) -> SesionReal:
 # declarado en su vuelta y las recuperaciones sueltas entre medio. Suman los
 # 10.0km reales, de los cuales 8.6 son los declarados en `estructura=`.
 VUELTAS_SERIES = [
-    Vuelta(1003, 1, 2.0, 800),                                    # calentamiento
-    Vuelta(1003, 2, 1.0, 240), Vuelta(1003, 3, 0.2, 90),
-    Vuelta(1003, 4, 1.0, 242), Vuelta(1003, 5, 0.2, 92),
-    Vuelta(1003, 6, 1.0, 238), Vuelta(1003, 7, 0.4, 150),  # trote largo, mide igual que una rep
-    Vuelta(1003, 8, 0.4, 84), Vuelta(1003, 9, 0.2, 78),
-    Vuelta(1003, 10, 0.4, 85), Vuelta(1003, 11, 0.2, 80),
-    Vuelta(1003, 12, 0.4, 83), Vuelta(1003, 13, 0.2, 79),
-    Vuelta(1003, 14, 0.4, 82),
-    Vuelta(1003, 15, 2.0, 820),                                   # enfriamiento
+    Vuelta("strava", "1003", 1, 2.0, 800),                                    # calentamiento
+    Vuelta("strava", "1003", 2, 1.0, 240), Vuelta("strava", "1003", 3, 0.2, 90),
+    Vuelta("strava", "1003", 4, 1.0, 242), Vuelta("strava", "1003", 5, 0.2, 92),
+    Vuelta("strava", "1003", 6, 1.0, 238), Vuelta("strava", "1003", 7, 0.4, 150),  # trote largo, mide igual que una rep
+    Vuelta("strava", "1003", 8, 0.4, 84), Vuelta("strava", "1003", 9, 0.2, 78),
+    Vuelta("strava", "1003", 10, 0.4, 85), Vuelta("strava", "1003", 11, 0.2, 80),
+    Vuelta("strava", "1003", 12, 0.4, 83), Vuelta("strava", "1003", 13, 0.2, 79),
+    Vuelta("strava", "1003", 14, 0.4, 82),
+    Vuelta("strava", "1003", 15, 2.0, 820),                                   # enfriamiento
 ]
 
 
@@ -208,7 +209,7 @@ def test_series_sin_vueltas_se_comparan_contra_el_total_y_la_nota_lo_dice():
 
 def test_series_con_vueltas_se_comparan_declarado_contra_declarado():
     """Con las vueltas del reloj se descuenta la recuperacion y sale 100%."""
-    r = _adh([sesion(3, distancia_km=10.0)], vueltas={1003: VUELTAS_SERIES})
+    r = _adh([sesion(3, distancia_km=10.0)], vueltas={("strava", "1003"): VUELTAS_SERIES})
     d = r.dias[3]
     assert d.objetivo == 8.6
     assert d.real == 8.6
@@ -250,14 +251,14 @@ def test_sesion_en_minutos_se_compara_en_minutos():
 
 
 def test_varias_sesiones_el_mismo_dia_se_suman():
-    r = _adh([sesion(1, distancia_km=4.0), sesion(1, strava_id=999, distancia_km=4.0)])
+    r = _adh([sesion(1, distancia_km=4.0), sesion(1, fuente="strava", id_externo="999", distancia_km=4.0)])
     assert r.dias[1].real == 8.0 and r.dias[1].estado == adherencia.CUMPLIDA
 
 
 def test_la_fuerza_del_dia_no_contamina_la_comparacion_de_carrera():
     reales = [
         sesion(1, distancia_km=8.0),
-        sesion(1, strava_id=999, tipo_strava="WeightTraining", es_fuerza=True, distancia_km=None),
+        sesion(1, fuente="strava", id_externo="999", tipo="WeightTraining", es_fuerza=True, distancia_km=None),
     ]
     assert _adh(reales).dias[1].pct == 100.0
 
@@ -336,11 +337,11 @@ def test_json_tendencia_de_cadencia(entorno):
     repo.guardar_sesion(sesion(1, cadencia_spm=176.0, carga=90.0))
     repo.guardar_sesion(
         SesionReal(
-            strava_id=1,
+            fuente="strava", id_externo="1",
             fecha_utc=f"{previa}T12:00:00+00:00",
             fecha_local=previa.isoformat(),
             dia_semana="L",
-            tipo_strava="Run",
+            tipo="Run",
             es_fuerza=False,
             distancia_km=10.0,
             cadencia_spm=170.0,

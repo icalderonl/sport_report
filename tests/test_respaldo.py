@@ -22,11 +22,12 @@ LUNES = date(2026, 8, 31)
 def _sesion(offset: int, **kw) -> SesionReal:
     f = LUNES + timedelta(days=offset)
     base = dict(
-        strava_id=100 + offset,
+        fuente="strava",
+        id_externo=str(100 + offset),
         fecha_utc=f"{f}T12:00:00+00:00",
         fecha_local=f.isoformat(),
         dia_semana="LMWJVSD"[offset],
-        tipo_strava="Run",
+        tipo="Run",
         es_fuerza=False,
         distancia_km=10.0,
         carga=250.0,
@@ -89,8 +90,9 @@ def test_la_copia_es_coherente_con_otro_proceso_escribiendo(data, tmp_path):
     with Repo(data / "sport_report.db") as repo:
         repo.con.execute("BEGIN")
         repo.con.execute(
-            "INSERT INTO sesiones (strava_id, fecha_utc, fecha_local, dia_semana, "
-            "tipo_strava, es_fuerza, ingerido_en) VALUES (999,'x','2026-09-01','M','Run',0,'x')"
+            "INSERT INTO sesiones (fuente, id_externo, fecha_utc, fecha_local, "
+            "dia_semana, tipo, es_fuerza, ingerido_en) "
+            "VALUES ('strava','999','x','2026-09-01','M','Run',0,'x')"
         )
         carpeta, _ = respaldo.respaldar(destino=tmp_path / "resp", origen=data)
         repo.con.rollback()
@@ -100,7 +102,7 @@ def test_la_copia_es_coherente_con_otro_proceso_escribiendo(data, tmp_path):
         assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         # Las 3 confirmadas si; la que quedo sin confirmar no.
         assert con.execute("SELECT COUNT(*) FROM sesiones").fetchone()[0] == 3
-        assert con.execute("SELECT COUNT(*) FROM sesiones WHERE strava_id=999").fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM sesiones WHERE id_externo='999'").fetchone()[0] == 0
     finally:
         con.close()
 

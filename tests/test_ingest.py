@@ -167,7 +167,7 @@ def test_fuerza_en_dia_no_planificado_no_es_error(repo, plan_store):
     act = actividad(9, "2026-09-07T18:00:00Z", tipo="Crossfit", distancia=0)
     r = _ingesta(ClienteFalso([act]), repo, plan_store).sincronizar(SEMANA.inicio, SEMANA.fin)
     assert r.fuerza_marcada == []
-    assert repo.sesion(9).es_fuerza is True
+    assert repo.sesion("strava", "9").es_fuerza is True
 
 
 def test_fuerza_marca_un_plan_ya_archivado(repo, plan_store):
@@ -211,7 +211,7 @@ def test_corrida_sin_hr_avisa_y_no_cuenta_para_la_carga(repo, plan_store):
     cli = ClienteFalso([actividad(1, "2026-09-08T12:00:00Z")], {1: s})
     r = _ingesta(cli, repo, plan_store).sincronizar(SEMANA.inicio, SEMANA.fin)
 
-    assert repo.sesion(1).carga is None
+    assert repo.sesion("strava", "1").carga is None
     assert r.sin_hr == 1
     assert any("sin HR" in a for a in r.avisos)
 
@@ -224,7 +224,7 @@ def test_sin_zonas_la_carga_queda_marcada_imprecisa(repo, plan_store):
 
     assert r.zonas_origen == "fallback" and r.carga_imprecisa is True
     assert any("imprecisa" in a for a in r.avisos)
-    assert repo.sesion(1).carga_impreciso is True
+    assert repo.sesion("strava", "1").carga_impreciso is True
 
 
 def test_las_zonas_se_cachean_en_la_base(repo, plan_store):
@@ -307,10 +307,10 @@ def test_las_vueltas_se_bajan_y_se_guardan(repo, plan_store):
     _ingesta(cli, repo, plan_store).sincronizar(SEMANA.inicio, SEMANA.fin)
 
     assert cli.pedidos_vueltas == [1]
-    assert [(v.indice, v.distancia_km) for v in repo.vueltas(1)] == [
+    assert [(v.indice, v.distancia_km) for v in repo.vueltas("strava", "1")] == [
         (1, 2.0), (2, 1.0), (3, 0.2)
     ]
-    assert repo.sesion(1).vueltas_procesadas is True
+    assert repo.sesion("strava", "1").vueltas_procesadas is True
 
 
 def test_reingerir_no_vuelve_a_pedir_las_vueltas(repo, plan_store):
@@ -337,7 +337,7 @@ def test_una_actividad_sin_vueltas_no_se_pregunta_para_siempre(repo, plan_store)
 
     assert r1.sin_vueltas == 1
     assert cli.pedidos_vueltas == [1]
-    assert repo.sesion(1).vueltas_procesadas is True
+    assert repo.sesion("strava", "1").vueltas_procesadas is True
 
 
 def test_si_las_vueltas_fallan_se_reintentan_la_proxima_vez(repo, plan_store):
@@ -363,14 +363,14 @@ def test_si_las_vueltas_fallan_se_reintentan_la_proxima_vez(repo, plan_store):
     ing = _ingesta(cli, repo, plan_store)
 
     ing.sincronizar(SEMANA.inicio, SEMANA.fin)
-    assert repo.sesion(1).vueltas_procesadas is False
+    assert repo.sesion("strava", "1").vueltas_procesadas is False
 
     cli.romper = False
     ing.sincronizar(SEMANA.inicio, SEMANA.fin)
 
     assert cli.pedidos_vueltas == [1, 1]
-    assert repo.sesion(1).vueltas_procesadas is True
-    assert len(repo.vueltas(1)) == 3
+    assert repo.sesion("strava", "1").vueltas_procesadas is True
+    assert len(repo.vueltas("strava", "1")) == 3
 
 
 def test_a_una_sesion_vieja_solo_se_le_piden_las_vueltas(repo, plan_store):
@@ -384,9 +384,9 @@ def test_a_una_sesion_vieja_solo_se_le_piden_las_vueltas(repo, plan_store):
     )
     ing = _ingesta(cli, repo, plan_store)
     ing.sincronizar(SEMANA.inicio, SEMANA.fin)
-    carga_antes = repo.sesion(1).carga
-    repo.marcar_vueltas_procesadas(1, False)
-    repo.guardar_vueltas(1, [])
+    carga_antes = repo.sesion("strava", "1").carga
+    repo.marcar_vueltas_procesadas("strava", "1", False)
+    repo.guardar_vueltas("strava", "1", [])
     cli.pedidos_streams.clear()
     cli.pedidos_vueltas.clear()
 
@@ -395,8 +395,8 @@ def test_a_una_sesion_vieja_solo_se_le_piden_las_vueltas(repo, plan_store):
     assert cli.pedidos_vueltas == [1]
     assert cli.pedidos_streams == [], "no habia que volver a bajar el stream"
     assert r.reutilizadas == 1
-    assert len(repo.vueltas(1)) == 3
-    assert repo.sesion(1).carga == carga_antes, "la carga no se perdio"
+    assert len(repo.vueltas("strava", "1")) == 3
+    assert repo.sesion("strava", "1").carga == carga_antes, "la carga no se perdio"
 
 
 def test_no_se_piden_vueltas_de_lo_que_no_es_carrera(repo, plan_store):

@@ -45,11 +45,12 @@ D: rest"""
 def _sesion(offset: int, **kw) -> SesionReal:
     f = LUNES + timedelta(days=offset)
     base = dict(
-        strava_id=9000 + offset,
+        fuente="strava",
+        id_externo=str(9000 + offset),
         fecha_utc=f"{f}T12:00:00+00:00",
         fecha_local=f.isoformat(),
         dia_semana="LMWJVSD"[offset],
-        tipo_strava="Run",
+        tipo="Run",
         es_fuerza=False,
         distancia_km=10.0,
         duracion_mov_s=3000,
@@ -77,7 +78,7 @@ def store(tmp_path) -> PlanStore:
 
 def test_una_salida_en_bici_no_entra_al_volumen_de_running():
     corrida = _sesion(0, distancia_km=8.0)
-    bici = _sesion(1, strava_id=999, tipo_strava="Ride", distancia_km=60.0)
+    bici = _sesion(1, fuente="strava", id_externo="999", tipo="Ride", distancia_km=60.0)
 
     r = adherencia.calcular(parse_plan(SOLO_LUNES), SEMANA, [corrida, bici])
 
@@ -87,7 +88,7 @@ def test_una_salida_en_bici_no_entra_al_volumen_de_running():
 
 def test_una_salida_en_bici_sigue_rompiendo_un_dia_de_descanso():
     """El filtro es para los kilometros, no para detectar el dia libre."""
-    bici = _sesion(1, tipo_strava="Ride", distancia_km=60.0)
+    bici = _sesion(1, tipo="Ride", distancia_km=60.0)
 
     r = adherencia.calcular(parse_plan(SOLO_LUNES), SEMANA, [bici])
 
@@ -98,7 +99,7 @@ def test_una_salida_en_bici_sigue_rompiendo_un_dia_de_descanso():
 
 def test_una_salida_en_bici_no_cuenta_como_la_sesion_del_dia():
     """El lunes hay 8km planificados y solo se pedaleo: es incumplimiento."""
-    bici = _sesion(0, tipo_strava="Ride", distancia_km=60.0)
+    bici = _sesion(0, tipo="Ride", distancia_km=60.0)
 
     r = adherencia.calcular(parse_plan(SOLO_LUNES), SEMANA, [bici])
 
@@ -109,7 +110,7 @@ def test_una_salida_en_bici_no_cuenta_como_la_sesion_del_dia():
 
 def test_el_grafico_de_volumen_solo_suma_carreras(repo):
     repo.guardar_sesion(_sesion(0, distancia_km=8.0))
-    repo.guardar_sesion(_sesion(1, strava_id=999, tipo_strava="Ride", distancia_km=60.0))
+    repo.guardar_sesion(_sesion(1, fuente="strava", id_externo="999", tipo="Ride", distancia_km=60.0))
 
     serie = dict(repo.volumen_semanal(SEMANA.fin, 1))
 
@@ -118,7 +119,7 @@ def test_el_grafico_de_volumen_solo_suma_carreras(repo):
 
 def test_otro_deporte_sin_hr_no_se_reporta_como_hueco_de_datos(repo):
     repo.guardar_sesion(_sesion(0, distancia_km=8.0, carga=200.0))
-    repo.guardar_sesion(_sesion(1, strava_id=999, tipo_strava="Ride", carga=None))
+    repo.guardar_sesion(_sesion(1, fuente="strava", id_externo="999", tipo="Ride", carga=None))
 
     datos = report.construir(SEMANA, repo)
 
@@ -290,10 +291,10 @@ def test_la_migracion_agrega_streams_procesados_a_una_base_vieja(tmp_path):
 
     with Repo(vieja) as r:
         # La que ya tenia carga no hay que volver a bajarla; la otra si, una vez.
-        assert r.sesion(1).streams_procesados is True
-        assert r.sesion(2).streams_procesados is False
+        assert r.sesion("strava", "1").streams_procesados is True
+        assert r.sesion("strava", "2").streams_procesados is False
     with Repo(vieja) as r:  # reabrir no vuelve a migrar ni rompe
-        assert r.sesion(1).streams_procesados is True
+        assert r.sesion("strava", "1").streams_procesados is True
 
 
 # --------------------------------------------------------------------------

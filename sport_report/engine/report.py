@@ -199,7 +199,7 @@ def construir(
             {
                 "fecha": s.fecha_local,
                 "dia": s.dia_semana,
-                "tipo": s.tipo_strava,
+                "tipo": s.tipo,
                 # La lista incluye TODA la actividad de la semana, tambien la
                 # que no es carrera. Solo las marcadas `es_run` entran en los
                 # totales de volumen y carga de arriba.

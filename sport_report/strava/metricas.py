@@ -190,7 +190,9 @@ def distancia_km(actividad: dict[str, Any]) -> float | None:
     return round(metros / 1000.0, 3) if metros > 0 else None
 
 
-def normalizar_vueltas(strava_id: int, crudas: Sequence[Any]) -> list["Vuelta"]:
+def normalizar_vueltas(
+    fuente: str, id_externo: Any, crudas: Sequence[Any]
+) -> list["Vuelta"]:
     """Vueltas de Strava -> modelo propio, descartando las inservibles.
 
     Una vuelta sin distancia o sin tiempo no aporta nada a la alineacion contra
@@ -214,7 +216,8 @@ def normalizar_vueltas(strava_id: int, crudas: Sequence[Any]) -> list["Vuelta"]:
             continue
         salida.append(
             Vuelta(
-                strava_id=strava_id,
+                fuente=fuente,
+                id_externo=str(id_externo),
                 indice=indice,
                 distancia_km=round(metros / 1000.0, 3),
                 duracion_mov_s=segundos,

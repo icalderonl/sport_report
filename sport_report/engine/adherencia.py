@@ -65,7 +65,7 @@ class DiaAdherencia:
     pct: float | None
     estado: str
     nota: str = ""
-    actividades: tuple[int, ...] = ()
+    actividades: tuple[str, ...] = ()
     # km trotados de recuperacion que quedaron fuera de la comparacion. Solo
     # tiene valor cuando las vueltas permitieron separarlos; sin esto la linea
     # del reporte diria "8.6km -> 8.6km" y se perderia que se corrieron 10.
@@ -187,7 +187,7 @@ def _descontar_recuperacion(
     else:
         alineacion = alinear(
             sesion_plan.estructura.segmentos_km(),
-            vueltas.get(corridas[0].strava_id, ()),
+            vueltas.get(corridas[0].clave, ()),
         )
         if alineacion.ok:
             return round(alineacion.declarada_km, 2), (
@@ -211,12 +211,12 @@ def _evaluar_dia(
     umbrales: Umbrales,
     vueltas: Mapping[int, Sequence[Vuelta]] = MappingProxyType({}),
 ) -> DiaAdherencia:
-    ids = tuple(s.strava_id for s in reales)
+    ids = tuple(s.id_externo for s in reales)
     base = dict(dia=sesion_plan.dia, fecha=fecha.isoformat(), tipo_plan=sesion_plan.tipo)
 
     if sesion_plan.es_descanso:
         hubo = bool(reales)
-        nombres = ", ".join(s.tipo_strava for s in reales)
+        nombres = ", ".join(s.tipo for s in reales)
         return DiaAdherencia(
             **base,
             objetivo=None,
@@ -328,7 +328,7 @@ def calcular(
 ) -> ResumenAdherencia:
     """`hasta` (inclusive) evalua una semana en curso; None evalua los 7 dias.
 
-    `vueltas` mapea strava_id -> vueltas de esa actividad. Solo se usan para las
+    `vueltas` mapea (fuente, id_externo) -> vueltas de esa actividad. Solo se usan para las
     sesiones con `estructura=`, para separar el trabajo declarado de la
     recuperacion. Sin ellas el calculo es el de antes, con la nota que lo dice.
     """

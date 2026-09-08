@@ -205,7 +205,7 @@ def test_con_vueltas_el_jueves_se_compara_declarado_contra_declarado(entorno):
     dia parece contradecir el volumen de la semana, que si los cuenta.
     """
     repo, _ = entorno
-    repo.guardar_vueltas(1003, VUELTAS_SERIES)
+    repo.guardar_vueltas("strava", "1003", VUELTAS_SERIES)
 
     m = _mensaje(entorno)
 
