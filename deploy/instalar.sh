@@ -107,7 +107,7 @@ echo
 echo "Listo. Siguientes pasos:"
 echo "  1. Completa $DESTINO/.env  (ver deploy/runbook-*.md)"
 echo "  2. sudo -u $USUARIO $DESTINO/.venv/bin/python -m sport_report.strava.autorizar"
-echo "  3. sudo -u $USUARIO $DESTINO/.venv/bin/python -m sport_report.strava.backfill 120"
+echo "  3. sudo -u $USUARIO $DESTINO/.venv/bin/python -m sport_report.backfill 120"
 echo "  4. sudo -u $USUARIO $DESTINO/.venv/bin/python -m sport_report.diagnostico"
 echo "  5. sudo systemctl restart sport-report-bot"
 echo

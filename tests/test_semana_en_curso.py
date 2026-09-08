@@ -414,7 +414,7 @@ def test_progreso_avisa_si_la_ingesta_falla(tmp_path):
         texto = comandos.cmd_progreso(
             _store(tmp_path), repo=repo, ingesta=IngestaRota(), hoy=LUNES + timedelta(days=5)
         )
-        assert "no se pudo sincronizar con Strava" in texto
+        assert "no se pudo sincronizar" in texto
         assert "429 cuota agotada" in texto
         assert "23.9 km de 38.3 km" in texto  # el resumen llega igual
     finally:

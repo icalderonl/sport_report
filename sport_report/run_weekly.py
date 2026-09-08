@@ -2,10 +2,15 @@
 
     python -m sport_report.run_weekly [opciones]
 
-Encadena: ingesta Strava -> motor de calculo -> narrativa -> formateo -> Telegram.
+Encadena: ingesta -> motor de calculo -> narrativa -> formateo -> Telegram.
+
+La ingesta va contra intervals.icu y cae al respaldo de Strava solo si esa
+falla; el selector vive en `sport_report/fuentes`.
 
 Politica de fallos (spec 10): el objetivo es que SIEMPRE llegue un mensaje.
-  - Si Strava falla, se reporta igual con lo que ya hay en la base, avisando.
+  - Si intervals.icu falla, se intenta Strava y la semana queda degradada,
+    dicho explicitamente en el reporte.
+  - Si las dos fallan, se reporta con lo que ya hay en la base, avisando.
   - Si Claude falla, se reporta igual sin la parte narrativa.
   - Solo un fallo del motor de calculo o del envio hace fracasar la corrida.
 """
@@ -19,16 +24,14 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Callable
 
-from . import config
+from . import config, fuentes
 from .db.repo import Repo
 from .engine import report
 from .fechas import RangoSemana, semana_a_reportar, semana_de
+from .fuentes.comun import IngestaBase
 from .logging_setup import setup
 from .narrative.claude import redactar
 from .plan.store import PlanStore
-from .strava.client import StravaClient
-from .strava.errors import StravaError
-from .strava.ingest import Ingesta
 from .telegram.formato import formatear_reporte
 from .telegram.sender import enviar, enviar_foto
 
@@ -64,27 +67,52 @@ def ejecutar(
     rango: RangoSemana,
     repo: Repo,
     plan_store: PlanStore | None = None,
-    ingesta: Ingesta | None = None,
+    ingesta: IngestaBase | None = None,
     narrador: Callable[[dict], Any] | None = redactar,
     enviador: Callable[[str], bool] | None = enviar,
     # Sin destino no se dibuja nada: evita que un test o una llamada de
     # biblioteca arranque matplotlib y escriba PNGs sin haberlo pedido.
     enviador_foto: Callable[..., bool] | None = None,
     guardar: bool = True,
+    seleccionar: Callable[[], "fuentes.ResultadoFuente"] | None = None,
 ) -> Resultado:
     """Corre el pipeline completo. No lanza salvo un fallo del motor de calculo."""
     plan_store = plan_store or PlanStore()
     problemas: list[str] = []
 
     # 1. Ingesta -----------------------------------------------------------
+    # `ingesta` inyectada = una fuente concreta (tests, o --fuente forzada ya
+    # resuelta por main). Sin ella, el selector elige y cae al respaldo solo.
     if ingesta is not None:
         try:
             resumen = ingesta.sincronizar(rango.inicio, rango.fin)
             log.info("ingesta ok: %s", resumen.to_json())
-        except StravaError as exc:
+            repo.guardar_fuente_semana(
+                rango.clave, resumen.fuente or ingesta.NOMBRE, resumen.fallback
+            )
+        except ingesta.ERRORES as exc:
             # No es fatal: la base ya tiene lo de corridas anteriores.
-            log.error("la ingesta de Strava fallo: %s", exc)
-            problemas.append(f"no se pudo sincronizar con Strava ({exc}); se reporta lo ya guardado")
+            log.error("la ingesta de %s fallo: %s", ingesta.NOMBRE, exc)
+            problemas.append(
+                f"no se pudo sincronizar con {ingesta.NOMBRE} ({exc}); se reporta "
+                "lo ya guardado"
+            )
+    elif seleccionar is not None:
+        resultado = seleccionar()
+        if not resultado.ok:
+            problemas.append(
+                f"no se pudo sincronizar con ninguna fuente ({resultado.motivo}); "
+                "se reporta lo ya guardado"
+            )
+        elif resultado.fallback:
+            # Que la semana salga por el respaldo no es un fallo silencioso: es
+            # una semana incompleta y la corrida queda `parcial` para que quede
+            # en la bitacora, ademas del aviso dentro del reporte.
+            problemas.append(
+                f"los datos vienen de {resultado.fuente} (respaldo) porque "
+                f"{resultado.motivo}: sin GCT, oscilacion vertical, ratio "
+                "vertical ni bienestar"
+            )
     else:
         log.info("ingesta omitida")
 
@@ -193,7 +221,17 @@ def _args(argv: list[str] | None):
         help="cualquier fecha dentro de la semana a reportar (por defecto, la que cerro)",
     )
     p.add_argument("--dry-run", action="store_true", help="imprime el mensaje en vez de enviarlo")
-    p.add_argument("--sin-ingesta", action="store_true", help="no consulta Strava")
+    p.add_argument(
+        "--sin-ingesta", action="store_true", help="no consulta ninguna fuente de datos"
+    )
+    p.add_argument(
+        "--fuente",
+        choices=(config.INTERVALS, config.STRAVA),
+        help=(
+            "fuerza la fuente principal (por defecto, FUENTE_PRINCIPAL del .env). "
+            "Con strava no hay respaldo: intervals.icu no respalda a Strava"
+        ),
+    )
     p.add_argument("--sin-narrativa", action="store_true", help="no llama a la API de Claude")
     p.add_argument("--sin-respaldo", action="store_true", help="no respalda data/ al terminar")
     return p.parse_args(argv)
@@ -247,18 +285,27 @@ def main(argv: list[str] | None = None) -> int:
 
     repo = Repo()
     corrida = repo.abrir_corrida()
-    cliente = None
+    seleccion: fuentes.ResultadoFuente | None = None
     r: Resultado | None = None
     try:
-        ingesta = None
+        seleccionar = None
         if not a.sin_ingesta:
-            cliente = StravaClient()
-            ingesta = Ingesta(cliente=cliente, repo=repo)
+
+            def seleccionar() -> fuentes.ResultadoFuente:
+                nonlocal seleccion
+                seleccion = fuentes.sincronizar(
+                    rango.inicio,
+                    rango.fin,
+                    repo,
+                    principal=a.fuente,
+                    semana=rango.clave,
+                )
+                return seleccion
 
         r = ejecutar(
             rango,
             repo=repo,
-            ingesta=ingesta,
+            seleccionar=seleccionar,
             narrador=None if a.sin_narrativa else redactar,
             enviador=None if a.dry_run else enviar,
             enviador_foto=_mostrar_foto if a.dry_run else enviar_foto,
@@ -271,10 +318,17 @@ def main(argv: list[str] | None = None) -> int:
         # Pase lo que pase la fila de `corridas` queda cerrada y la conexion
         # liberada: una corrida abierta para siempre no se distingue despues de
         # un error real.
-        if cliente is not None:
-            cliente.cerrar()
+        if seleccion is not None:
+            seleccion.cerrar()
         if r is not None:
-            repo.cerrar_corrida(corrida, r.estado, json.dumps(r.problemas, ensure_ascii=False))
+            # La fuente usada va en el detalle: diagnosticar una semana rara
+            # empieza por saber de donde salieron los datos.
+            detalle = {
+                "fuente": (r.datos.get("fuente") or {}).get("usada"),
+                "fallback": (r.datos.get("fuente") or {}).get("fallback", False),
+                "problemas": r.problemas,
+            }
+            repo.cerrar_corrida(corrida, r.estado, json.dumps(detalle, ensure_ascii=False))
         repo.cerrar()
         # Despues de cerrar la base, y tambien cuando la corrida fallo: una
         # corrida rota no es motivo para quedarse sin copia de los tokens.

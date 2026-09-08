@@ -86,7 +86,7 @@ cuatro semanas mostrarían ACWR y Monotony como no confiables, y el gráfico cas
 vacío, aunque los datos ya estén en Strava.
 
 ```bash
-python -m sport_report.strava.backfill 120
+python -m sport_report.backfill 120
 ```
 
 Trae los días pedidos con 1.5 s de pausa entre requests, holgado dentro de las

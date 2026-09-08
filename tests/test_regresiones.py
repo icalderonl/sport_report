@@ -574,21 +574,21 @@ def sin_tocar_disco(monkeypatch):
         raise AssertionError("el CLI toco la base antes de validar sus argumentos")
 
     from sport_report import run_weekly as rw
-    from sport_report.strava import backfill as bf
+    from sport_report import backfill as bf
 
     monkeypatch.setattr(bf, "Repo", prohibido)
     monkeypatch.setattr(rw, "Repo", prohibido)
 
 
 def test_backfill_rechaza_un_argumento_que_no_es_numero(capsys, sin_tocar_disco):
-    from sport_report.strava import backfill
+    from sport_report import backfill
 
     assert backfill.main(["muchos"]) == 2
     assert "no es un numero de dias" in capsys.readouterr().err
 
 
 def test_backfill_rechaza_dias_negativos(capsys, sin_tocar_disco):
-    from sport_report.strava import backfill
+    from sport_report import backfill
 
     assert backfill.main(["-5"]) == 2
     assert "1 o mas" in capsys.readouterr().err

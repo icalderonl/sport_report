@@ -135,8 +135,11 @@ def main() -> int:
         linea(FALLA, ".env", f"no existe en {config.ROOT}")
     else:
         linea(OK, ".env", "presente")
-    _secreto("STRAVA_CLIENT_ID", config.STRAVA_CLIENT_ID)
-    _secreto("STRAVA_CLIENT_SECRET", config.STRAVA_CLIENT_SECRET)
+    # La clave de la fuente principal es obligatoria; la de Strava, no: sin
+    # ella se pierde el respaldo, que es un aviso, no una falla.
+    _secreto("INTERVALS_API_KEY", config.INTERVALS_API_KEY)
+    _secreto("STRAVA_CLIENT_ID", config.STRAVA_CLIENT_ID, obligatorio=False)
+    _secreto("STRAVA_CLIENT_SECRET", config.STRAVA_CLIENT_SECRET, obligatorio=False)
     _secreto("TELEGRAM_BOT_TOKEN", config.TELEGRAM_BOT_TOKEN)
     _secreto("TELEGRAM_CHAT_ID", config.TELEGRAM_CHAT_ID)
     _secreto("ANTHROPIC_API_KEY", config.ANTHROPIC_API_KEY, obligatorio=False)
@@ -144,7 +147,9 @@ def main() -> int:
     marca, detalle = estado_tokens(
         leer_json(config.TOKENS_PATH), config.STRAVA_REFRESH_TOKEN
     )
-    linea(marca, "tokens de Strava", detalle)
+    # El respaldo casi nunca se ejercita, asi que su credencial puede podrirse
+    # sin que nadie lo note hasta el dia que hace falta.
+    linea(AVISO if marca == FALLA else marca, "tokens de Strava (respaldo)", detalle)
 
     # -- plan ------------------------------------------------------------
     seccion("PLAN")
@@ -179,6 +184,21 @@ def main() -> int:
     else:
         linea(OK, "plan de la semana a reportar", str(objetivo))
 
+    # -- fuente de datos -------------------------------------------------
+    seccion("FUENTE DE DATOS")
+    if config.FUENTE_PRINCIPAL == config.INTERVALS:
+        linea(OK, "fuente principal", "intervals.icu (respaldo: Strava)")
+    elif config.FUENTE_PRINCIPAL == config.STRAVA:
+        linea(
+            AVISO,
+            "fuente principal",
+            "Strava forzada: sin GCT, oscilacion ni ratio vertical, sin bienestar "
+            "y SIN respaldo",
+        )
+    else:
+        linea(FALLA, "fuente principal", f"valor desconocido: {config.FUENTE_PRINCIPAL!r}")
+    linea(OK, "atleta de intervals.icu", config.INTERVALS_ATHLETE_ID)
+
     # -- base de datos ---------------------------------------------------
     seccion("BASE DE DATOS")
     if not config.DB_PATH.exists():
@@ -191,7 +211,7 @@ def main() -> int:
             tam = config.DB_PATH.stat().st_size / 1024
             linea(OK, "SQLite", f"{config.DB_PATH.name}, {tam:.0f} KB")
             if primera is None:
-                linea(AVISO, "historico", "sin sesiones; corre python -m sport_report.strava.backfill")
+                linea(AVISO, "historico", "sin sesiones; corre python -m sport_report.backfill")
             else:
                 dias = (hoy - primera).days
                 sesiones = len(repo.sesiones_entre(primera, hoy))
@@ -208,7 +228,7 @@ def main() -> int:
             if zonas:
                 linea(OK, "zonas de HR", describir_zonas(zonas))
             elif origen is None:
-                linea(AVISO, "zonas de HR", "aun no se consultaron a Strava")
+                linea(AVISO, "zonas de HR", "aun no se consultaron a la fuente")
             else:
                 linea(
                     AVISO,
@@ -230,6 +250,21 @@ def main() -> int:
                         "interrumpida": AVISO,
                     }.get(c["estado"], FALLA)
                     linea(marca, f"corrida {c['inicio_utc']}", f"{c['estado']} {c['detalle'] or ''}")
+
+            # De donde salieron los datos de las ultimas semanas. Una racha de
+            # semanas por respaldo significa que intervals.icu lleva tiempo
+            # fallando y nadie lo vio: son las semanas sin dinamica ni bienestar.
+            objetivo_semana = semana_a_reportar()
+            desde_semana = (objetivo_semana.inicio - timedelta(weeks=5)).isoformat()
+            filas = repo.fuentes_entre(desde_semana, objetivo_semana.clave)
+            if not filas:
+                linea(AVISO, "fuente por semana", "sin registro todavia")
+            for f in filas:
+                linea(
+                    AVISO if f["fallback"] else OK,
+                    f"semana {f['semana']}",
+                    f["fuente"] + (" (respaldo)" if f["fallback"] else ""),
+                )
         finally:
             repo.cerrar()
 

@@ -5,13 +5,15 @@ from datetime import date
 
 import pytest
 
-from sport_report import run_weekly
+from sport_report import fuentes, run_weekly
+from sport_report.fuentes import ResumenIngesta
 from sport_report.db.repo import Repo
 from sport_report.fechas import semana_de
 from sport_report.narrative.claude import Narrativa, redactar
 from sport_report.plan.grammar import parse_plan
 from sport_report.plan.store import PlanStore
 from sport_report.run_weekly import ERROR, OK, PARCIAL, ejecutar
+from sport_report.intervals.errors import IntervalsError
 from sport_report.strava.errors import StravaError
 from sport_report.telegram.formato import formatear_reporte
 from tests.test_engine import VUELTAS_SERIES, sesion
@@ -46,17 +48,25 @@ class Buzon:
 
 
 class IngestaFalsa:
-    def __init__(self, excepcion=None):
+    """Doble de una fuente concreta ya elegida (no del selector)."""
+
+    NOMBRE = "intervals"
+    ERRORES = (StravaError, IntervalsError)
+
+    def __init__(self, excepcion=None, nombre="intervals"):
         self.excepcion = excepcion
+        self.NOMBRE = nombre
         self.llamadas: list[tuple] = []
 
     def sincronizar(self, desde, hasta, **kw):
         self.llamadas.append((desde, hasta))
         if self.excepcion:
             raise self.excepcion
-        from sport_report.strava.ingest import ResumenIngesta
+        from sport_report.fuentes import ResumenIngesta
 
-        return ResumenIngesta(actividades=4, corridas=4, zonas_origen="strava")
+        return ResumenIngesta(
+            actividades=4, corridas=4, zonas_origen=self.NOMBRE, fuente=self.NOMBRE
+        )
 
 
 def narrador_ok(datos):
@@ -97,6 +107,127 @@ def test_strava_caido_reporta_igual_con_lo_guardado(entorno):
     assert "429 cuota agotada" in buzon.mensajes[0]
     # Las cifras siguen saliendo de lo que ya habia en la base.
     assert "43.7 km reales" in buzon.mensajes[0]
+
+
+def test_la_semana_por_respaldo_queda_parcial_y_lo_dice(entorno):
+    """Salir por Strava no es un exito silencioso: es una semana incompleta."""
+    repo, store = entorno
+    repo.guardar_fuente_semana(SEMANA.clave, "strava", True, "intervals: 401")
+    buzon = Buzon()
+
+    def seleccionar():
+        return fuentes.ResultadoFuente(
+            fuente="strava",
+            resumen=ResumenIngesta(actividades=3, corridas=3, zonas_origen="strava"),
+            fallback=True,
+            intentos=(("intervals", "401: clave rechazada"),),
+        )
+
+    r = ejecutar(
+        SEMANA, repo, store, seleccionar=seleccionar, narrador=None,
+        enviador=buzon, guardar=False,
+    )
+
+    assert r.estado == PARCIAL and r.enviado
+    assert any("respaldo" in p and "401" in p for p in r.problemas)
+    assert r.datos["fuente"]["fallback"] is True
+    # Y el atleta lo lee en el mensaje, no solo en el log.
+    assert "respaldo" in buzon.mensajes[0]
+
+
+def test_una_semana_por_la_fuente_principal_es_ok(entorno):
+    repo, store = entorno
+    repo.guardar_fuente_semana(SEMANA.clave, "intervals", False)
+
+    def seleccionar():
+        return fuentes.ResultadoFuente(
+            fuente="intervals",
+            resumen=ResumenIngesta(actividades=3, corridas=3, zonas_origen="intervals"),
+        )
+
+    r = ejecutar(
+        SEMANA, repo, store, seleccionar=seleccionar, narrador=None,
+        enviador=Buzon(), guardar=False,
+    )
+    assert r.estado == OK
+    assert r.datos["fuente"]["usada"] == "intervals"
+
+
+def test_si_ninguna_fuente_responde_el_reporte_sale_con_lo_guardado(entorno):
+    repo, store = entorno
+    buzon = Buzon()
+
+    def seleccionar():
+        return fuentes.ResultadoFuente(
+            intentos=(("intervals", "sin red"), ("strava", "429")),
+        )
+
+    r = ejecutar(
+        SEMANA, repo, store, seleccionar=seleccionar, narrador=None,
+        enviador=buzon, guardar=False,
+    )
+    assert r.estado == PARCIAL and r.enviado
+    assert any("ninguna fuente" in p for p in r.problemas)
+    assert "43.7 km reales" in buzon.mensajes[0]
+
+
+def test_la_fuente_usada_queda_en_la_bitacora_de_la_corrida(entorno):
+    """Diagnosticar una semana rara empieza por saber de donde salieron los datos."""
+    import json
+
+    repo, store = entorno
+    repo.guardar_fuente_semana(SEMANA.clave, "strava", True, "intervals: 401")
+    r = ejecutar(SEMANA, repo, store, narrador=None, enviador=None, guardar=False)
+
+    cid = repo.abrir_corrida()
+    detalle = {
+        "fuente": r.datos["fuente"]["usada"],
+        "fallback": r.datos["fuente"]["fallback"],
+        "problemas": r.problemas,
+    }
+    repo.cerrar_corrida(cid, r.estado, json.dumps(detalle))
+    guardado = json.loads(repo.ultimas_corridas(1)[0]["detalle"])
+    assert (guardado["fuente"], guardado["fallback"]) == ("strava", True)
+
+
+def test_la_fuente_forzada_por_cli_llega_al_selector(entorno, monkeypatch):
+    vistos = {}
+
+    def falso_sincronizar(desde, hasta, repo, plan_store=None, **kw):
+        vistos.update(kw)
+        return fuentes.ResultadoFuente(
+            fuente="strava", resumen=ResumenIngesta(zonas_origen="strava")
+        )
+
+    repo, store = entorno
+    monkeypatch.setattr(fuentes, "sincronizar", falso_sincronizar)
+    monkeypatch.setattr(run_weekly, "Repo", lambda *a, **k: repo)
+    monkeypatch.setattr(repo, "cerrar", lambda: None)
+    monkeypatch.setattr(run_weekly, "PlanStore", lambda *a, **k: store)
+
+    codigo = run_weekly.main(
+        ["--semana", "2026-09-07", "--dry-run", "--sin-narrativa", "--sin-respaldo",
+         "--fuente", "strava"]
+    )
+
+    assert codigo == 0
+    assert vistos["principal"] == "strava"
+    assert vistos["semana"] == SEMANA.clave
+
+
+def test_sin_ingesta_no_se_consulta_ninguna_fuente(entorno, monkeypatch):
+    llamadas = []
+    repo, store = entorno
+    monkeypatch.setattr(fuentes, "sincronizar", lambda *a, **k: llamadas.append(1))
+    monkeypatch.setattr(run_weekly, "Repo", lambda *a, **k: repo)
+    monkeypatch.setattr(repo, "cerrar", lambda: None)
+    monkeypatch.setattr(run_weekly, "PlanStore", lambda *a, **k: store)
+
+    codigo = run_weekly.main(
+        ["--semana", "2026-09-07", "--dry-run", "--sin-narrativa", "--sin-respaldo",
+         "--sin-ingesta"]
+    )
+    assert codigo == 0 and llamadas == []
 
 
 def test_claude_caido_reporta_igual_sin_narrativa(entorno):

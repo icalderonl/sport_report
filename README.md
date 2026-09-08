@@ -73,7 +73,7 @@ y su ausencia no impide que el reporte llegue.
 | `python -m sport_report.run_weekly --dry-run` | Imprime el reporte sin enviarlo y deja el gráfico en disco |
 | `python -m sport_report.strava.autorizar` | Flujo OAuth inicial (una sola vez) |
 | `python -m sport_report.strava.verificar` | Confirma la conexión con Strava |
-| `python -m sport_report.strava.backfill 120` | Historial inicial: 28 días para ACWR, 112 para el gráfico |
+| `python -m sport_report.backfill 120` | Historial inicial: 28 días para ACWR, 112 para el gráfico |
 | `python -m sport_report.narrative.probar` | Prueba la capa narrativa |
 | `python -m sport_report.telegram.bot` | Levanta el bot en primer plano |
 | `python -m sport_report.respaldo [destino]` | Copia `data/` (base, tokens, planes) |

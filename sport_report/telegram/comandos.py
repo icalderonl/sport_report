@@ -187,26 +187,37 @@ def cmd_progreso(
 
         repo = Repo()
 
-    cliente = None
+    resultado = None
     avisos: list[str] = []
     try:
         if ingesta is None and sincronizar:
+            # El selector elige la fuente y cae al respaldo por su cuenta; aca
+            # solo interesa que la respuesta diga con que datos se armo.
+            from .. import fuentes
+
             try:
-                from ..strava.client import StravaClient
-                from ..strava.ingest import Ingesta
-
-                cliente = StravaClient()
-                ingesta = Ingesta(cliente=cliente, repo=repo)
+                resultado = fuentes.sincronizar(
+                    rango.inicio, dia, repo, store, semana=rango.clave
+                )
+                if not resultado.ok:
+                    avisos.append(
+                        f"no se pudo sincronizar con ninguna fuente ({resultado.motivo}); "
+                        "se muestra lo ya guardado"
+                    )
+                elif resultado.fallback:
+                    avisos.append(
+                        f"datos desde {resultado.fuente} (respaldo): sin GCT, "
+                        "oscilacion vertical, ratio vertical ni bienestar"
+                    )
             except Exception as exc:  # sin credenciales, sin red, sin SDK
-                avisos.append(f"no se pudo abrir la conexion con Strava ({exc})")
-
-        if ingesta is not None:
+                avisos.append(f"no se pudo abrir la conexion con la fuente de datos ({exc})")
+        elif ingesta is not None:
             try:
                 ingesta.sincronizar(rango.inicio, dia)
             except Exception as exc:
                 # Igual que la corrida semanal: se responde con lo que hay.
                 avisos.append(
-                    f"no se pudo sincronizar con Strava ({exc}); se muestra lo ya guardado"
+                    f"no se pudo sincronizar ({exc}); se muestra lo ya guardado"
                 )
 
         datos = report.construir(rango, repo, store, hasta=dia)
@@ -215,8 +226,8 @@ def cmd_progreso(
             texto += "\n\n" + "\n".join(f"({a})" for a in avisos)
         return texto
     finally:
-        if cliente is not None:
-            cliente.cerrar()
+        if resultado is not None:
+            resultado.cerrar()
         if repo_propio:
             repo.cerrar()
 
@@ -257,7 +268,7 @@ def cmd_volumen(
     if not any(s["km"] for s in historico["semanas"]):
         return None, (
             "Todavia no hay kilometros registrados.\n"
-            "Corre: python -m sport_report.strava.backfill 120"
+            "Corre: python -m sport_report.backfill 120"
         )
 
     from ..grafico import volumen_png

@@ -55,6 +55,35 @@ def _cadencia(actual: list[SesionReal], previa: list[SesionReal]) -> Tendencia:
     return Tendencia(valor=va, anterior=vp, delta=delta, n=len(a))
 
 
+def _fuente(repo: Repo, clave: str) -> dict[str, Any]:
+    """Que fuente sirvio la semana y que quedo fuera por eso.
+
+    Se lee de la base y no del resumen de la ingesta para que salga bien
+    tambien cuando la corrida va con --sin-ingesta o se rehace un reporte
+    viejo. `no_disponibles` es la lista de bloques que esa fuente no puede
+    llenar: asi el texto del reporte y el JSON no pueden discrepar.
+    """
+    from ..fuentes import NO_DISPONIBLE
+
+    fila = repo.fuente_semana(clave)
+    if not fila:
+        return {
+            "principal": config.FUENTE_PRINCIPAL,
+            "usada": None,
+            "fallback": False,
+            "motivo": "no hay registro de que fuente sirvio esta semana",
+            "no_disponibles": [],
+        }
+    usada = fila["fuente"]
+    return {
+        "principal": config.FUENTE_PRINCIPAL,
+        "usada": usada,
+        "fallback": fila["fallback"],
+        "motivo": fila["detalle"] or "",
+        "no_disponibles": list(NO_DISPONIBLE.get(usada, ())),
+    }
+
+
 def _decoupling(sesiones: list[SesionReal], umbrales: Umbrales) -> dict[str, Any]:
     valores = [s.decoupling_pct for s in sesiones if s.decoupling_pct is not None]
     # Solo las corridas pueden tener deriva: contar una salida en bici como
@@ -135,8 +164,9 @@ def construir(
     avisos: list[str] = list(r_adh.avisos)
     if impreciso:
         avisos.append(
-            "la carga se calculo con peso de zona fijo (el atleta no tiene zonas "
-            "de HR en Strava): las cifras de carga, ACWR y Monotony son imprecisas"
+            "la carga se calculo con peso de zona fijo (no se pudieron leer las "
+            "zonas de HR del atleta): las cifras de carga, ACWR y Monotony son "
+            "imprecisas"
         )
     if sin_carga:
         avisos.append(
@@ -153,6 +183,17 @@ def construir(
     # se desincroniza cuando alguien le agrega un parametro.
     r_deriva = _decoupling(sesiones, umbrales)
     alertas = [a for a in (r_acwr.alerta, r_foster.alerta, r_deriva["alerta"]) if a]
+
+    fuente = _fuente(repo, rango.clave)
+    if fuente["fallback"]:
+        # Al frente: es lo primero que hay que saber de esta semana. Nombra lo
+        # que falta en vez de dejarlo como un hueco silencioso.
+        avisos.insert(
+            0,
+            f"esta semana los datos vienen de {fuente['usada']} (respaldo): no hay "
+            "GCT, oscilacion vertical, ratio vertical ni bienestar (HRV, sueno, "
+            "sleep score, Body Battery, readiness). La semana no esta completa",
+        )
 
     return {
         "version": VERSION_REPORTE,
@@ -190,6 +231,7 @@ def construir(
             "impreciso": impreciso,
             "sesiones_sin_carga": sin_carga,
         },
+        "fuente": fuente,
         "acwr": r_acwr.to_json(),
         "monotony": r_foster.to_json(),
         "deriva_cardiaca": r_deriva,
