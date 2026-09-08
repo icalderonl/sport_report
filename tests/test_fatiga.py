@@ -90,7 +90,10 @@ def test_no_existe_ningun_score_que_combine_bienestar_y_carga():
         "acwr_confiable",
         "monotony",
         "monotony_confiable",
+        # Los dos textos son plantillas que enuncian; ninguno es una cifra
+        # nueva. `carga_texto` es solo el lado de la carga, para el mensaje.
         "lectura",
+        "carga_texto",
         "nota",
     }
 

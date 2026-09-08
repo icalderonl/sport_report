@@ -83,3 +83,55 @@ def semana_a_reportar(momento: datetime | None = None) -> RangoSemana:
 
 def parse_rango(clave: str) -> RangoSemana:
     return semana_de(date.fromisoformat(clave))
+
+
+# --------------------------------------------------------------------------
+# Meses (reporte mensual, spec 7bis)
+# --------------------------------------------------------------------------
+
+
+class MesRango(NamedTuple):
+    inicio: date  # dia 1
+    fin: date  # ultimo dia del mes
+
+    def __str__(self) -> str:
+        return f"{self.inicio.isoformat()} a {self.fin.isoformat()}"
+
+    @property
+    def clave(self) -> str:
+        """Identificador estable del mes, usado como nombre de archivo."""
+        return self.inicio.strftime("%Y-%m")
+
+    def contiene(self, d: date) -> bool:
+        return self.inicio <= d <= self.fin
+
+
+def mes_de(d: date) -> MesRango:
+    inicio = d.replace(day=1)
+    # El dia 28 del mes siguiente evita tener que saber cuantos dias trae cada
+    # mes y funciona igual en febrero.
+    siguiente = (inicio + timedelta(days=31)).replace(day=1)
+    return MesRango(inicio, siguiente - timedelta(days=1))
+
+
+def mes_anterior(mes: MesRango | None = None) -> MesRango:
+    base = mes or mes_de(hoy_local())
+    return mes_de(base.inicio - timedelta(days=1))
+
+
+def semanas_del_mes(mes: MesRango) -> list[RangoSemana]:
+    """Semanas cuyo LUNES cae dentro del mes.
+
+    El criterio tiene que ser uno y estable: una semana a caballo entre dos
+    meses no se puede partir sin inventar cifras, asi que se asigna entera al
+    mes de su lunes. Las que quedan a caballo se listan aparte en el reporte
+    para que el texto no presente el mes como si cerrara justo.
+    """
+    salida: list[RangoSemana] = []
+    lunes = semana_de(mes.inicio).inicio
+    if lunes < mes.inicio:  # el mes no empieza en lunes
+        lunes += timedelta(days=7)
+    while lunes <= mes.fin:
+        salida.append(semana_de(lunes))
+        lunes += timedelta(days=7)
+    return salida

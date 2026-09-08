@@ -22,15 +22,27 @@ import logging
 import sys
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 from typing import Any, Callable
 
 from . import config, fuentes
 from .db.repo import Repo
+from .engine import mensual as m_mensual
 from .engine import report
-from .fechas import RangoSemana, semana_a_reportar, semana_de
+from .fechas import (
+    MesRango,
+    RangoSemana,
+    hoy_local,
+    mes_anterior,
+    mes_de,
+    semana_a_reportar,
+    semana_de,
+)
 from .fuentes.comun import IngestaBase
 from .logging_setup import setup
 from .narrative.claude import redactar
+from .narrative.mensual import redactar_mensual
+from .plan.carrera import CarreraStore
 from .plan.store import PlanStore
 from .telegram.formato import formatear_reporte
 from .telegram.sender import enviar, enviar_foto
@@ -50,17 +62,53 @@ class Resultado:
     datos: dict[str, Any] = field(default_factory=dict)
     enviado: bool = False
     problemas: list[str] = field(default_factory=list)
+    #: Clave del mes reportado ("2026-09"), vacia si esta corrida no llevaba
+    #: reporte mensual.
+    mensual: str = ""
+    datos_mensuales: dict[str, Any] = field(default_factory=dict)
 
     @property
     def codigo_salida(self) -> int:
         return 1 if self.estado == ERROR else 0
 
 
+def ruta_reporte(rango: RangoSemana) -> Path:
+    return config.DATA_DIR / "reportes" / f"{rango.clave}.json"
+
+
+def ruta_mensual(mes: MesRango) -> Path:
+    return config.DATA_DIR / "reportes" / "mensual" / f"{mes.clave}.json"
+
+
 def _guardar_reporte(rango: RangoSemana, datos: dict[str, Any]) -> None:
     """Deja el JSON en disco para poder auditar que vio el sistema esa semana."""
     from .storage import escribir_json
 
-    escribir_json(config.DATA_DIR / "reportes" / f"{rango.clave}.json", datos)
+    escribir_json(ruta_reporte(rango), datos)
+
+
+def toca_mensual(
+    hoy: date | None = None, forzar: bool = False, hecho=None
+) -> MesRango | None:
+    """El mes que corresponde reportar hoy, o None.
+
+    El mensual cubre el mes calendario ANTERIOR y se dispara en la primera
+    corrida semanal que ya cae en el mes nuevo.
+
+    Son DOS guardas, no una: la de calendario y la de que el archivo del mes no
+    exista. La segunda es la que hace la decision idempotente — una corrida
+    repetida, un `--semana` retroactivo o un reintento tras un fallo no pueden
+    mandar el mensual dos veces.
+    """
+    hoy = hoy or hoy_local()
+    mes = mes_anterior(mes_de(hoy))
+    ya_hecho = hecho if hecho is not None else (lambda m: ruta_mensual(m).exists())
+    if forzar:
+        return mes
+    if ya_hecho(mes):
+        log.info("el mensual de %s ya se envio: no se repite", mes.clave)
+        return None
+    return mes
 
 
 def ejecutar(
@@ -75,6 +123,9 @@ def ejecutar(
     enviador_foto: Callable[..., bool] | None = None,
     guardar: bool = True,
     seleccionar: Callable[[], "fuentes.ResultadoFuente"] | None = None,
+    mensual: MesRango | None = None,
+    narrador_mensual: Callable[[dict], Any] | None = redactar_mensual,
+    carrera_store: "CarreraStore | None" = None,
 ) -> Resultado:
     """Corre el pipeline completo. No lanza salvo un fallo del motor de calculo."""
     plan_store = plan_store or PlanStore()
@@ -191,6 +242,53 @@ def ejecutar(
         if not enviador_foto(ruta_grafico, "Volumen semanal"):
             problemas.append("no se pudo enviar el grafico de volumen")
 
+    # 6. Reporte mensual --------------------------------------------------
+    # Un unico mensaje narrado, sin datos crudos ni grafico (spec 7bis). Todo
+    # el bloque va envuelto: un fallo aca degrada la corrida a parcial pero no
+    # puede tumbar el semanal, que ya se envio.
+    datos_mensuales: dict[str, Any] | None = None
+    if mensual is not None and enviado:
+        try:
+            datos_mensuales = m_mensual.construir(
+                mensual,
+                repo,
+                plan_store,
+                carrera=(carrera_store or CarreraStore()).cargar(),
+            )
+            if guardar:
+                from .storage import escribir_json
+
+                escribir_json(ruta_mensual(mensual), datos_mensuales)
+
+            texto_mensual = None
+            if narrador_mensual is not None:
+                nm = narrador_mensual(datos_mensuales)
+                if nm.ok:
+                    texto_mensual = nm.texto
+                    datos_mensuales["narrativa"] = nm.to_json()
+                    if guardar:
+                        escribir_json(ruta_mensual(mensual), datos_mensuales)
+                    if nm.numeros_no_verificados:
+                        log.warning(
+                            "cifras sin respaldo en el mensual: %s",
+                            nm.numeros_no_verificados,
+                        )
+                else:
+                    problemas.append(f"reporte mensual sin narrativa ({nm.error})")
+
+            if texto_mensual and enviador is not None:
+                cabecera = f"REPORTE MENSUAL - {mensual.clave} (solo carrera)\n\n"
+                if not enviador(cabecera + texto_mensual):
+                    problemas.append("no se pudo enviar el reporte mensual")
+                else:
+                    log.info("reporte mensual de %s enviado", mensual.clave)
+            elif texto_mensual:
+                # dry-run: se imprime junto al semanal.
+                mensaje += "\n\n" + "=" * 40 + "\n\n" + cabecera_dry(mensual) + texto_mensual
+        except Exception as exc:  # el mensual nunca puede costar el semanal
+            log.exception("el reporte mensual fallo")
+            problemas.append(f"reporte mensual no disponible ({exc})")
+
     if not enviado:
         estado = ERROR
     elif problemas:
@@ -205,7 +303,13 @@ def ejecutar(
         datos=datos,
         enviado=enviado,
         problemas=problemas,
+        mensual=mensual.clave if mensual is not None else "",
+        datos_mensuales=datos_mensuales or {},
     )
+
+
+def cabecera_dry(mes: MesRango) -> str:
+    return f"REPORTE MENSUAL - {mes.clave} (solo carrera)\n\n"
 
 
 # --------------------------------------------------------------------------
@@ -234,6 +338,14 @@ def _args(argv: list[str] | None):
     )
     p.add_argument("--sin-narrativa", action="store_true", help="no llama a la API de Claude")
     p.add_argument("--sin-respaldo", action="store_true", help="no respalda data/ al terminar")
+    p.add_argument(
+        "--mensual",
+        action="store_true",
+        help="fuerza el reporte mensual del mes anterior aunque ya se haya enviado",
+    )
+    p.add_argument(
+        "--sin-mensual", action="store_true", help="no envia el reporte mensual"
+    )
     return p.parse_args(argv)
 
 
@@ -302,6 +414,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return seleccion
 
+        # `--semana` retroactivo no cambia que mes toca: el mensual se decide
+        # por la fecha real de la corrida, no por la semana que se reporta.
+        mes = None if a.sin_mensual else toca_mensual(forzar=a.mensual)
+
         r = ejecutar(
             rango,
             repo=repo,
@@ -309,6 +425,8 @@ def main(argv: list[str] | None = None) -> int:
             narrador=None if a.sin_narrativa else redactar,
             enviador=None if a.dry_run else enviar,
             enviador_foto=_mostrar_foto if a.dry_run else enviar_foto,
+            mensual=mes,
+            narrador_mensual=None if a.sin_narrativa else redactar_mensual,
         )
     except Exception as exc:  # el motor de calculo o algo imprevisto
         log.exception("la corrida fallo")

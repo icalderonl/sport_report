@@ -217,8 +217,8 @@ def test_el_mensaje_muestra_el_bloque_de_fatiga(entorno):
     texto = formatear_reporte(_json(entorno))
     assert "FATIGA Y DESCANSO" in texto
     assert "HRV 68" in texto and "sleep score 82" in texto
-    # El cruce enuncia los dos lados, sin fusionarlos.
-    assert "Al mismo tiempo" in texto
+    # El cruce aporta el lado de la carga, sin fusionarlo con el bienestar.
+    assert "al mismo tiempo:" in texto
 
 
 def test_un_reporte_v1_archivado_se_sigue_formateando():

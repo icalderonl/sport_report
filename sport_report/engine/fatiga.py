@@ -232,6 +232,9 @@ def calcular(
         "monotony": monotony,
         "monotony_confiable": monotony_ok,
         "lectura": lectura,
+        # Solo el lado de la carga, para el mensaje: las lineas de bienestar
+        # ya salen arriba y repetirlas hacia el bloque ilegible.
+        "carga_texto": ", ".join(partes_carga),
         "nota": (
             "los dos datos se reportan por separado a proposito: no existe un "
             "indice que los combine"

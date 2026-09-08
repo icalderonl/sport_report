@@ -358,7 +358,11 @@ def _valores_legitimos(datos: dict[str, Any], rutas: tuple[tuple[str, ...], ...]
     return salida
 
 
-def verificar_atribucion(texto: str, datos: dict[str, Any]) -> list[str]:
+def verificar_atribucion(
+    texto: str,
+    datos: dict[str, Any],
+    metricas: tuple[tuple[str, "re.Pattern[str]", tuple[tuple[str, ...], ...]], ...] | None = None,
+) -> list[str]:
     """Cifras que el texto atribuye a una metrica y no son de esa metrica.
 
     Es una senal mucho mas fuerte que la de `verificar_cifras`: aca hay una
@@ -368,10 +372,15 @@ def verificar_atribucion(texto: str, datos: dict[str, Any]) -> list[str]:
     Tambien atrapa el caso de citar una metrica que el motor dejo en `null`: si
     el ACWR no se pudo calcular, cualquier numero pegado a la palabra ACWR esta
     mal, venga de donde venga.
+
+    `metricas` permite pasar otra tabla de rutas para el mismo mecanismo: el
+    reporte mensual tiene los mismos nombres de metrica en otras rutas del JSON
+    (ver narrative/mensual.py). Por defecto, la tabla del reporte semanal.
     """
+    metricas = metricas if metricas is not None else METRICAS
     # Posicion de cada nombre de metrica que aparezca en el texto.
     apariciones: list[tuple[int, int, int]] = []  # (inicio, fin, indice de metrica)
-    for i, (_, patron, _) in enumerate(METRICAS):
+    for i, (_, patron, _) in enumerate(metricas):
         apariciones.extend((m.start(), m.end(), i) for m in patron.finditer(texto))
 
     problemas: list[str] = []
@@ -381,7 +390,7 @@ def verificar_atribucion(texto: str, datos: dict[str, Any]) -> list[str]:
         if duenno is None:
             continue
 
-        nombre, _, rutas = METRICAS[duenno]
+        nombre, _, rutas = metricas[duenno]
         legitimos = _valores_legitimos(datos, rutas)
         n = _norm(num.group())
         if n in legitimos or _norm(round(float(n), 1)) in legitimos:

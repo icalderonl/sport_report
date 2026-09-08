@@ -39,8 +39,9 @@ PLANES_DIR = DATA_DIR / "planes"
 # Aparte del plan a proposito: la carrera objetivo dura meses y /setplan
 # reemplaza el plan cada semana.
 CARRERA_PATH = DATA_DIR / "carrera.json"
-REPORTES_DIR = DATA_DIR / "reportes"
-REPORTES_MENSUALES_DIR = REPORTES_DIR / "mensual"
+# Los reportes NO tienen constante: se derivan de DATA_DIR al escribirlos
+# (`run_weekly.ruta_reporte` / `ruta_mensual`). Una constante calculada en el
+# import se queda con el DATA_DIR de ese momento y se desincroniza.
 
 TZ = ZoneInfo(os.getenv("TZ_LOCAL", "America/Santiago"))
 
@@ -157,6 +158,10 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
+# El mensual usa un modelo mas capaz: es una llamada al mes, el costo a esa
+# frecuencia es irrelevante, y la ventaja esta en sostener un texto sobre
+# cuatro semanas de datos. No en calcular: eso lo sigue haciendo Python.
+ANTHROPIC_MODEL_MENSUAL = os.getenv("ANTHROPIC_MODEL_MENSUAL", "claude-sonnet-5")
 
 TIPOS_RUN = ("Run", "TrailRun", "VirtualRun")
 TIPOS_FUERZA = ("WeightTraining", "Workout", "Crossfit")

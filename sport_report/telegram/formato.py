@@ -202,9 +202,12 @@ def _bloque_fatiga(f: dict | None) -> str:
             linea += f", roto el {', '.join(d['dias_rotos'])}"
         filas.append(linea)
 
-    cruce = (f.get("cruce_carga") or {}).get("lectura")
-    if cruce:
-        filas.append(f"  {cruce}")
+    # Del cruce, en el mensaje va solo el lado de la carga: el bienestar ya
+    # esta en las lineas de arriba. La lectura completa vive en el JSON.
+    cruce = f.get("cruce_carga") or {}
+    carga = cruce.get("carga_texto")
+    if carga and filas:
+        filas.append(f"  al mismo tiempo: {carga}")
 
     return "FATIGA Y DESCANSO\n" + "\n".join(filas) if filas else ""
 
