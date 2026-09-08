@@ -49,6 +49,15 @@ JSON. No calcules, no promedies, no estimes, no conviertas unidades, no infieras
 porcentajes ni totales. Si un numero que quieres decir no esta en el JSON, no lo
 digas.
 
+Que cubrir en el resumen:
+- volumen real contra planificado, con contexto y no solo el numero;
+- que implican el ACWR y el Monotony/Strain de esta semana, no solo repetirlos;
+- deriva cardiaca si hubo sesiones largas relevantes;
+- tendencia de la dinamica de carrera (cadencia, GCT, oscilacion y ratio
+  vertical) contra la semana anterior;
+- fatiga y descanso si hay datos de bienestar;
+- las alertas, si "alertas" trae alguna.
+
 Como leer el JSON:
 - Un bloque con "confiable": false NO es un hecho. Si lo mencionas, di
   explicitamente que no es confiable y por que (esta en "motivo").
@@ -57,9 +66,20 @@ Como leer el JSON:
   la presentes como sesion no hecha.
 - Los valores de "umbrales" son de literatura general, no estan calibrados a este
   atleta. No los presentes como verdad medica.
+- Un bloque con "disponible": false NO tiene dato. Su "motivo" dice por que. No
+  lo presentes como un cero ni te lo saltes en silencio si venia al caso.
+- Si "fuente"."fallback" es true, la semana se ingirio desde la fuente de
+  respaldo y esta INCOMPLETA: dilo explicitamente y nombra lo que falta, que
+  esta en "fuente"."no_disponibles". Nunca la presentes como una semana normal.
+- NUNCA combines el bienestar (HRV, HR de reposo, sueno, sleep score, Body
+  Battery, readiness) y la carga (ACWR, Monotony, Strain) en un solo indicador,
+  puntaje o juicio unico. Reportalos por separado; si dices algo de la relacion
+  entre ambos, di los dos numeros. El JSON no trae ningun indice combinado
+  porque no existe uno con respaldo metodologico.
 
 Formato de salida:
-- 3 a 5 lineas de resumen ejecutivo, en espanol, tono directo y concreto.
+- 5 a 8 lineas de resumen ejecutivo, en espanol, tono directo y concreto. Mas
+  detallado que un resumen de tres lineas, sin volverse un listado de cifras.
 - Despues, si "alertas" no esta vacio, una linea por alerta empezando con "Alerta:".
 - Texto plano. Sin markdown, sin encabezados, sin vinetas, sin emojis.
 - No des consejo medico ni prescribas entrenamientos.\
@@ -206,6 +226,91 @@ METRICAS: tuple[tuple[str, re.Pattern[str], tuple[tuple[str, ...], ...]], ...] =
             ("cadencia", "semana_anterior"),
             ("cadencia", "delta"),
             ("cadencia", "n_sesiones"),
+        ),
+    ),
+    (
+        "GCT",
+        re.compile(r"\bGCT\b|tiempo de contacto", re.I),
+        (
+            ("gct", "valor"),
+            ("gct", "semana_anterior"),
+            ("gct", "delta"),
+            ("gct", "n_sesiones"),
+        ),
+    ),
+    (
+        "oscilacion vertical",
+        re.compile(r"oscilaci[oó]n vertical", re.I),
+        (
+            ("oscilacion_vertical", "valor"),
+            ("oscilacion_vertical", "semana_anterior"),
+            ("oscilacion_vertical", "delta"),
+            ("oscilacion_vertical", "n_sesiones"),
+        ),
+    ),
+    (
+        "ratio vertical",
+        re.compile(r"ratio vertical", re.I),
+        (
+            ("ratio_vertical", "valor"),
+            ("ratio_vertical", "semana_anterior"),
+            ("ratio_vertical", "delta"),
+            ("ratio_vertical", "n_sesiones"),
+        ),
+    ),
+    (
+        "HRV",
+        re.compile(r"\bHRV\b|variabilidad card[ií]aca", re.I),
+        (
+            ("fatiga_descanso", "hrv", "valor"),
+            ("fatiga_descanso", "hrv", "semana_anterior"),
+            ("fatiga_descanso", "hrv", "delta"),
+            ("fatiga_descanso", "hrv", "n_dias"),
+            ("umbrales", "hrv_caida_ms"),
+        ),
+    ),
+    (
+        "HR de reposo",
+        re.compile(r"(HR|pulso|frecuencia card[ií]aca) (en |de )?reposo", re.I),
+        (
+            ("fatiga_descanso", "hr_reposo", "valor"),
+            ("fatiga_descanso", "hr_reposo", "semana_anterior"),
+            ("fatiga_descanso", "hr_reposo", "delta"),
+            ("fatiga_descanso", "hr_reposo", "n_dias"),
+        ),
+    ),
+    (
+        "sueno",
+        re.compile(r"sue[nñ]o|\bdorm", re.I),
+        (
+            ("fatiga_descanso", "sueno_h", "valor"),
+            ("fatiga_descanso", "sueno_h", "semana_anterior"),
+            ("fatiga_descanso", "sueno_h", "delta"),
+            ("fatiga_descanso", "sueno_h", "n_dias"),
+            ("fatiga_descanso", "sueno_score", "valor"),
+            ("fatiga_descanso", "sueno_score", "semana_anterior"),
+            ("fatiga_descanso", "sueno_score", "delta"),
+        ),
+    ),
+    (
+        "readiness",
+        re.compile(r"readiness|disponibilidad", re.I),
+        (
+            ("fatiga_descanso", "readiness", "valor"),
+            ("fatiga_descanso", "readiness", "semana_anterior"),
+            ("fatiga_descanso", "readiness", "delta"),
+            ("fatiga_descanso", "readiness", "n_dias"),
+            ("umbrales", "readiness_bajo"),
+        ),
+    ),
+    (
+        "Body Battery",
+        re.compile(r"body battery", re.I),
+        (
+            ("fatiga_descanso", "body_battery", "valor"),
+            ("fatiga_descanso", "body_battery", "semana_anterior"),
+            ("fatiga_descanso", "body_battery", "delta"),
+            ("fatiga_descanso", "body_battery", "n_dias"),
         ),
     ),
     (

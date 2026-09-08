@@ -90,9 +90,26 @@ class Estimacion:
     tipos_con_ritmo_por_defecto: tuple[str, ...] = ("easy",)
 
 
+@dataclass(frozen=True)
+class Bienestar:
+    """Bienestar diario (solo lo provee intervals.icu).
+
+    Los umbrales son de literatura general, igual que los de `Umbrales`: no
+    estan calibrados a este atleta y son valores iniciales ajustables.
+    """
+
+    # Dias con dato minimos para hablar de una tendencia semanal. Con menos, la
+    # metrica se declara no disponible: un promedio de un dia no es tendencia.
+    dias_minimos: int = 3
+    # Caida de HRV (ms) respecto a la semana anterior que merece una alerta.
+    hrv_caida_ms: float = 5.0
+    readiness_bajo: float = 40.0
+
+
 UMBRALES = Umbrales()
 CARGA = Carga()
 ESTIMACION = Estimacion()
+BIENESTAR = Bienestar()
 
 # Semanas que muestra el grafico de volumen del reporte.
 SEMANAS_GRAFICO = 16

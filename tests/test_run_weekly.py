@@ -304,8 +304,16 @@ def _mensaje(entorno, **kw) -> str:
 
 def test_mensaje_trae_todas_las_secciones(entorno):
     m = _mensaje(entorno)
-    for seccion in ("REPORTE SEMANAL", "VOLUMEN", "CARGA", "DERIVA CARDIACA", "CADENCIA", "ADHERENCIA"):
+    for seccion in (
+        "REPORTE SEMANAL",
+        "VOLUMEN",
+        "CARGA",
+        "DERIVA CARDIACA",
+        "DINAMICA DE CARRERA",
+        "ADHERENCIA",
+    ):
         assert seccion in m
+    assert "cadencia" in m
     assert "Plan: semana 5" in m
     assert "7 de septiembre al 13 de septiembre" in m
 

@@ -125,6 +125,90 @@ def _linea_dia(d: dict) -> str:
     return linea + _cola_fuerza(d)
 
 
+def _tendencia_corta(nombre: str, t: dict | None, unidad: str = "") -> str:
+    """`nombre valor (+delta vs semana anterior)`, o el motivo si no hay dato."""
+    if not t:
+        return ""
+    u = unidad or t.get("unidad") or ""
+    if u and not u.startswith(" ") and u != "%":
+        u = " " + u
+    if t.get("valor") is None:
+        motivo = t.get("motivo") or "sin dato"
+        return f"{nombre}: sin dato ({motivo})"
+    linea = f"{nombre} {_num(t['valor'], u)}"
+    if t.get("delta") is not None:
+        signo = "+" if t["delta"] >= 0 else ""
+        linea += f"  ({signo}{_num(t['delta'])} vs semana anterior)"
+    if t.get("disponible") is False and t.get("motivo"):
+        linea += f"  [{t['motivo']}]"
+    return linea
+
+
+def _bloque_dinamica(datos: dict) -> str:
+    """Cadencia, GCT, oscilacion y ratio vertical.
+
+    Las tres ultimas solo las da intervals.icu: si faltan se dice por que, en
+    vez de omitir la seccion y dejar creer que no se midio nada.
+    """
+    filas: list[str] = []
+    cad = datos.get("cadencia") or {}
+    if cad.get("valor") is not None:
+        filas.append("  " + _tendencia_corta("cadencia", cad, "spm"))
+
+    for clave, nombre in (
+        ("gct", "GCT"),
+        ("oscilacion_vertical", "oscilacion vertical"),
+        ("ratio_vertical", "ratio vertical"),
+    ):
+        t = datos.get(clave)
+        if not t:
+            continue
+        if t.get("valor") is not None or t.get("motivo"):
+            filas.append("  " + _tendencia_corta(nombre, t))
+
+    return "DINAMICA DE CARRERA\n" + "\n".join(filas) if filas else ""
+
+
+def _bloque_fatiga(f: dict | None) -> str:
+    """Bienestar, descanso y el cruce con la carga.
+
+    El cruce enuncia los dos hechos por separado, como llega del motor: aca no
+    se resume en una sola frase ni se convierte en un score.
+    """
+    if not f:
+        return ""
+    filas: list[str] = []
+    for clave, nombre in (
+        ("hrv", "HRV"),
+        ("hr_reposo", "HR reposo"),
+        ("sueno_h", "sueno"),
+        ("sueno_score", "sleep score"),
+        ("readiness", "readiness"),
+        ("body_battery", "Body Battery"),
+    ):
+        t = f.get(clave)
+        if t and t.get("valor") is not None:
+            filas.append("  " + _tendencia_corta(nombre, t))
+
+    if not filas and f.get("motivo"):
+        filas.append(f"  sin datos de bienestar: {f['motivo']}")
+
+    d = f.get("descanso") or {}
+    if d.get("planificados") or d.get("tomados"):
+        linea = f"  descanso {d.get('tomados', 0)}/{d.get('planificados', 0)} planificados"
+        if d.get("dias_extra"):
+            linea += f", extra el {', '.join(d['dias_extra'])}"
+        if d.get("dias_rotos"):
+            linea += f", roto el {', '.join(d['dias_rotos'])}"
+        filas.append(linea)
+
+    cruce = (f.get("cruce_carga") or {}).get("lectura")
+    if cruce:
+        filas.append(f"  {cruce}")
+
+    return "FATIGA Y DESCANSO\n" + "\n".join(filas) if filas else ""
+
+
 def formatear_reporte(datos: dict, narrativa: str | None = None) -> str:
     """Arma el mensaje de Telegram a partir del JSON del motor de calculo.
 
@@ -183,13 +267,15 @@ def formatear_reporte(datos: dict, narrativa: str | None = None) -> str:
             f"  ({dc['n_sesiones']} sesiones)"
         )
 
-    cad = datos["cadencia"]
-    if cad["valor"] is not None:
-        linea = f"CADENCIA\n  {_num(cad['valor'], ' spm')}"
-        if cad["delta"] is not None:
-            signo = "+" if cad["delta"] >= 0 else ""
-            linea += f"  ({signo}{_num(cad['delta'])} vs semana anterior)"
-        L.append(linea)
+    # `datos.get(...)`: un reporte archivado en v1 no trae estos bloques y se
+    # tiene que seguir pudiendo formatear.
+    din = _bloque_dinamica(datos)
+    if din:
+        L.append(din)
+
+    fat = _bloque_fatiga(datos.get("fatiga_descanso"))
+    if fat:
+        L.append(fat)
 
     adh = datos["adherencia"]
     if adh["dias"]:

@@ -190,9 +190,40 @@ COMPLETO = {
     "monotony": {"monotony": 0.97, "strain": 768.2, "confiable": True},
     "deriva_cardiaca": {"promedio_pct": 3.6, "maximo_pct": 7.8, "n_sesiones": 4},
     "cadencia": {"valor": 175.8, "semana_anterior": 171.0, "delta": 4.8},
+    "gct": {"valor": 232.0, "semana_anterior": 240.0, "delta": -8.0, "n_sesiones": 4,
+            "unidad": "ms", "disponible": True, "motivo": ""},
+    "oscilacion_vertical": {"valor": 8.4, "semana_anterior": 8.1, "delta": 0.3,
+                            "n_sesiones": 4, "unidad": "cm", "disponible": True,
+                            "motivo": ""},
+    "ratio_vertical": {"valor": 7.9, "semana_anterior": 7.6, "delta": 0.3,
+                       "n_sesiones": 4, "unidad": "%", "disponible": True, "motivo": ""},
+    "fatiga_descanso": {
+        "disponible": True,
+        "motivo": "",
+        "hrv": {"valor": 62.0, "semana_anterior": 70.0, "delta": -8.0, "n_dias": 6,
+                "unidad": "ms", "disponible": True, "motivo": ""},
+        "hr_reposo": {"valor": 50.0, "semana_anterior": 48.0, "delta": 2.0, "n_dias": 6,
+                      "unidad": "lpm", "disponible": True, "motivo": ""},
+        "sueno_h": {"valor": 6.9, "semana_anterior": 7.6, "delta": -0.7, "n_dias": 6,
+                    "unidad": "h", "disponible": True, "motivo": ""},
+        "sueno_score": {"valor": 74.0, "semana_anterior": 82.0, "delta": -8.0,
+                        "n_dias": 6, "unidad": "", "disponible": True, "motivo": ""},
+        "readiness": {"valor": 38.0, "semana_anterior": 66.0, "delta": -28.0,
+                      "n_dias": 6, "unidad": "", "disponible": True, "motivo": ""},
+        "body_battery": {"valor": None, "semana_anterior": None, "delta": None,
+                         "n_dias": 0, "unidad": "", "disponible": False,
+                         "motivo": "la fuente no reporto este dato en la semana"},
+        "descanso": {"planificados": 2, "tomados": 1, "dias_planificados": ["L", "S"],
+                     "dias_tomados": ["L"], "dias_extra": [], "dias_rotos": ["S"]},
+        "cruce_carga": {"acwr": 1.72, "acwr_confiable": True, "monotony": 0.97,
+                        "monotony_confiable": True, "lectura": "x", "nota": "y"},
+    },
+    "fuente": {"principal": "intervals", "usada": "intervals", "fallback": False,
+               "motivo": "", "no_disponibles": []},
     "adherencia": {"pct_global": 75.0, "sesiones_cumplidas": 3, "sesiones_evaluables": 4},
     "umbrales": {"acwr_alto": 1.5, "acwr_bajo": 0.8, "monotony_alta": 2.0,
-                 "decoupling_alto_pct": 5.0},
+                 "decoupling_alto_pct": 5.0, "hrv_caida_ms": 5.0,
+                 "readiness_bajo": 40.0},
     "alertas": [],
     "avisos_datos": [],
 }
@@ -380,3 +411,92 @@ def test_un_numero_sin_metrica_cerca_no_se_comprueba():
     """"la carrera larga de 16 km" no habla de ninguna metrica: no hay nada que
     contrastar y inventarse una atribucion daria falsos positivos."""
     assert verificar_atribucion("el domingo hiciste la carrera larga de 16 km", PRODUCCION) == []
+
+
+# --------------------------------------------------------------------------
+# Atribucion de las metricas de fase 2
+#
+# Sin estas entradas, `verificar_atribucion` dejaba de cubrir la dinamica
+# avanzada y el bienestar EN SILENCIO: la confusion de cifras que ese codigo
+# existe para atrapar volvia a pasar desapercibida justo en los bloques nuevos.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "El GCT promedio fue 232.0 ms, 8.0 menos que la semana anterior.",
+        "El tiempo de contacto quedo en 232.0 ms.",
+        "La oscilacion vertical subio a 8.4 cm.",
+        "El ratio vertical quedo en 7.9%.",
+        "El HRV promedio cayo a 62.0 ms.",
+        "La variabilidad cardiaca bajo 8.0 ms respecto a la semana pasada.",
+        "El HR en reposo subio a 50.0 lpm.",
+        "El pulso de reposo promedio fue 50.0.",
+        "Dormiste 6.9 h en promedio, con sleep score 74.0.",
+        "El readiness promedio fue 38.0, bajo el umbral de 40.0.",
+    ],
+)
+def test_las_metricas_nuevas_bien_citadas_pasan(texto):
+    assert verificar_atribucion(texto, COMPLETO) == []
+
+
+@pytest.mark.parametrize(
+    ("texto", "metrica"),
+    [
+        # 8.4 es la oscilacion vertical, no el GCT.
+        ("El GCT promedio fue 8.4 ms.", "GCT"),
+        # 232.0 es el GCT, no la oscilacion.
+        ("La oscilacion vertical fue 232.0 cm.", "oscilacion vertical"),
+        # 8.4 es la oscilacion, no el ratio.
+        ("El ratio vertical quedo en 8.4%.", "ratio vertical"),
+        # 50.0 es el HR de reposo, no el HRV.
+        ("El HRV promedio fue 50.0 ms.", "HRV"),
+        # 62.0 es el HRV, no el HR de reposo.
+        ("El HR en reposo fue 62.0 lpm.", "HR de reposo"),
+        # 38.0 es el readiness, no las horas de sueno.
+        ("Dormiste 38.0 horas.", "sueno"),
+        # 6.9 son las horas de sueno, no el readiness.
+        ("El readiness promedio fue 6.9.", "readiness"),
+    ],
+)
+def test_una_cifra_intercambiada_entre_metricas_nuevas_se_detecta(texto, metrica):
+    problemas = verificar_atribucion(texto, COMPLETO)
+    assert problemas, f"no se detecto la confusion en: {texto}"
+    assert problemas[0].startswith(metrica)
+
+
+def test_citar_body_battery_cuando_la_fuente_no_la_dio_es_atribuir_mal():
+    """Es el caso mas probable: el campo puede no existir en la API."""
+    problemas = verificar_atribucion("El Body Battery promedio fue 64.0.", COMPLETO)
+    assert problemas == ["Body Battery: el texto dice 64.0 y el JSON trae null"]
+
+
+def test_decir_que_no_hay_body_battery_no_es_atribuir_mal():
+    assert verificar_atribucion(
+        "La fuente no reporto Body Battery esta semana.", COMPLETO
+    ) == []
+
+
+def test_el_prompt_prohibe_fusionar_bienestar_y_carga():
+    """Es la regla que sostiene la promesa del bloque de fatiga."""
+    from sport_report.narrative.claude import SISTEMA
+
+    assert "NUNCA combines el bienestar" in SISTEMA
+    assert "indicador" in SISTEMA or "puntaje" in SISTEMA
+    assert "Reportalos por separado" in SISTEMA
+
+
+def test_el_prompt_obliga_a_declarar_la_semana_de_respaldo():
+    from sport_report.narrative.claude import SISTEMA
+
+    assert '"fuente"."fallback"' in SISTEMA
+    assert "INCOMPLETA" in SISTEMA
+    assert "no_disponibles" in SISTEMA
+
+
+def test_el_prompt_explica_que_disponible_false_no_es_un_cero():
+    from sport_report.narrative.claude import SISTEMA
+
+    assert '"disponible": false' in SISTEMA
+    assert "como un cero" in SISTEMA and "en silencio" in SISTEMA

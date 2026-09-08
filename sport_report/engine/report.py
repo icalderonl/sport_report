@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from typing import Any
 
@@ -17,14 +17,19 @@ from ..config import UMBRALES, Umbrales
 from ..db.models import SesionReal
 from ..db.repo import Repo
 from ..fechas import RangoSemana, ahora_local, semana_anterior
+from ..plan.models import ORDEN_DIAS
 from ..plan.store import PlanStore
 from . import acwr as m_acwr
 from . import adherencia as m_adh
+from . import fatiga as m_fatiga
 from . import foster as m_foster
 
 log = logging.getLogger(__name__)
 
-VERSION_REPORTE = 1
+# v2: agrega los bloques `fuente`, `gct`, `oscilacion_vertical`,
+# `ratio_vertical` y `fatiga_descanso`. Nadie bifurca sobre este numero; esta
+# para poder mirar un reporte archivado y saber que esperaba traer.
+VERSION_REPORTE = 2
 
 
 @dataclass(frozen=True)
@@ -33,26 +38,70 @@ class Tendencia:
     anterior: float | None
     delta: float | None
     n: int
+    #: Solo para las metricas que no todas las fuentes dan. `None` = siempre
+    #: disponible (cadencia), que es como se comportaba antes.
+    unidad: str | None = None
+    disponible: bool | None = None
+    motivo: str = ""
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "valor": self.valor,
             "semana_anterior": self.anterior,
             "delta": self.delta,
             "n_sesiones": self.n,
         }
+        if self.unidad is not None:
+            d["unidad"] = self.unidad
+            d["disponible"] = bool(self.disponible)
+            d["motivo"] = self.motivo
+        return d
 
 
 def _promedio(valores: list[float]) -> float | None:
     return round(statistics.fmean(valores), 1) if valores else None
 
 
-def _cadencia(actual: list[SesionReal], previa: list[SesionReal]) -> Tendencia:
-    a = [s.cadencia_spm for s in actual if s.cadencia_spm]
-    p = [s.cadencia_spm for s in previa if s.cadencia_spm]
+def _tendencia(
+    actual: list[SesionReal], previa: list[SesionReal], atributo: str
+) -> Tendencia:
+    """Promedio semanal de un atributo por sesion y delta contra la anterior."""
+    a = [v for v in (getattr(s, atributo) for s in actual) if v]
+    p = [v for v in (getattr(s, atributo) for s in previa) if v]
     va, vp = _promedio(a), _promedio(p)
     delta = round(va - vp, 1) if va is not None and vp is not None else None
     return Tendencia(valor=va, anterior=vp, delta=delta, n=len(a))
+
+
+def _dinamica(
+    actual: list[SesionReal],
+    previa: list[SesionReal],
+    atributo: str,
+    unidad: str,
+    fuente: dict[str, Any],
+) -> Tendencia:
+    """Dinamica avanzada, que SOLO da intervals.icu.
+
+    Cuando no hay valor, el motivo distingue los tres casos que se arreglan de
+    forma distinta: la semana vino del respaldo, el reloj no lo midio, o no hay
+    corridas de las que sacarlo. Nunca se devuelve 0.0: un GCT de cero diria
+    que el pie no toco el suelo.
+    """
+    t = _tendencia(actual, previa, atributo)
+    if t.valor is not None:
+        return replace(t, unidad=unidad, disponible=True)
+
+    corridas = sum(1 for s in actual if s.es_run)
+    if fuente.get("fallback"):
+        motivo = (
+            f"la semana se ingirio desde {fuente.get('usada')} (respaldo), que no "
+            "expone dinamica de carrera"
+        )
+    elif not corridas:
+        motivo = "no hubo corridas esta semana"
+    else:
+        motivo = f"el reloj no reporto este dato en ninguna de las {corridas} corridas"
+    return replace(t, valor=None, unidad=unidad, disponible=False, motivo=motivo)
 
 
 def _fuente(repo: Repo, clave: str) -> dict[str, Any]:
@@ -182,9 +231,33 @@ def construir(
     # Una sola vez: es pura y barata, pero calcularla en dos sitios es lo que
     # se desincroniza cuando alguien le agrega un parametro.
     r_deriva = _decoupling(sesiones, umbrales)
-    alertas = [a for a in (r_acwr.alerta, r_foster.alerta, r_deriva["alerta"]) if a]
-
     fuente = _fuente(repo, rango.clave)
+
+    # -- fatiga y descanso: primer uso del bienestar que se venia guardando --
+    bienestar = repo.bienestar_entre(rango.inicio, fin_ventana)
+    bienestar_previa = repo.bienestar_entre(previa.inicio, previa.fin)
+    dias_descanso_plan = (
+        tuple(d for d in ORDEN_DIAS if plan.es_descanso(d)) if plan else ()
+    )
+    r_fatiga = m_fatiga.calcular(
+        bienestar,
+        bienestar_previa,
+        r_acwr=r_acwr,
+        r_foster=r_foster,
+        descanso_planificado=dias_descanso_plan,
+        # Se derivan de los estados que ya calculo la adherencia: no hay una
+        # segunda definicion de "dia de descanso tomado" que se pueda desviar.
+        descanso_tomado=tuple(
+            d.dia for d in r_adh.dias if d.estado == m_adh.DESCANSO_OK
+        ),
+        descanso_roto=tuple(
+            d.dia for d in r_adh.dias if d.estado == m_adh.DESCANSO_ROTO
+        ),
+        fuente_degradada=bool(fuente.get("fallback")),
+    )
+
+    alertas = [a for a in (r_acwr.alerta, r_foster.alerta, r_deriva["alerta"]) if a]
+    alertas.extend(r_fatiga.alertas)
     if fuente["fallback"]:
         # Al frente: es lo primero que hay que saber de esta semana. Nombra lo
         # que falta en vez de dejarlo como un hueco silencioso.
@@ -235,7 +308,17 @@ def construir(
         "acwr": r_acwr.to_json(),
         "monotony": r_foster.to_json(),
         "deriva_cardiaca": r_deriva,
-        "cadencia": _cadencia(sesiones, sesiones_previas).to_json(),
+        "cadencia": _tendencia(sesiones, sesiones_previas, "cadencia_spm").to_json(),
+        # Las tres que solo da intervals.icu. Con el respaldo activo salen en
+        # null con `disponible: false` y el motivo, nunca en cero.
+        "gct": _dinamica(sesiones, sesiones_previas, "gct_ms", "ms", fuente).to_json(),
+        "oscilacion_vertical": _dinamica(
+            sesiones, sesiones_previas, "oscilacion_vertical_cm", "cm", fuente
+        ).to_json(),
+        "ratio_vertical": _dinamica(
+            sesiones, sesiones_previas, "ratio_vertical_pct", "%", fuente
+        ).to_json(),
+        "fatiga_descanso": r_fatiga.to_json(),
         "adherencia": r_adh.to_json(),
         "sesiones": [
             {
@@ -252,6 +335,9 @@ def construir(
                 "hr_promedio": s.hr_promedio,
                 "cadencia_spm": s.cadencia_spm,
                 "potencia_w": s.potencia_w,
+                "gct_ms": s.gct_ms,
+                "oscilacion_vertical_cm": s.oscilacion_vertical_cm,
+                "ratio_vertical_pct": s.ratio_vertical_pct,
                 "decoupling_pct": s.decoupling_pct,
                 "carga": s.carga,
             }
@@ -264,6 +350,8 @@ def construir(
             "acwr_bajo": umbrales.acwr_bajo,
             "monotony_alta": umbrales.monotony_alta,
             "decoupling_alto_pct": umbrales.decoupling_alto_pct,
+            "hrv_caida_ms": config.BIENESTAR.hrv_caida_ms,
+            "readiness_bajo": config.BIENESTAR.readiness_bajo,
             "nota": "valores de literatura general, no calibrados a este atleta",
         },
     }
