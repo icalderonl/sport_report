@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import statistics
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any, Sequence
 
 from .. import config
@@ -28,15 +28,20 @@ from ..config import UMBRALES, Umbrales
 from ..db.models import BienestarDia, SesionReal
 from ..db.repo import Repo
 from ..fechas import MesRango, RangoSemana, ahora_local, mes_anterior, semanas_del_mes
+from ..plan.models import ORDEN_DIAS, PlanSemanal
 from ..plan.store import PlanStore
 from . import acwr as m_acwr
 from . import adherencia as m_adh
 from . import fatiga as m_fatiga
 from . import foster as m_foster
 
+#: Tipos de plan que cuentan como "entrenamiento de calidad" para el mensual.
+#: El largo ("long") se reporta aparte: es volumen, no intensidad.
+TIPOS_CALIDAD = ("tempo", "series", "fartlek")
+
 log = logging.getLogger(__name__)
 
-VERSION_REPORTE_MENSUAL = 1
+VERSION_REPORTE_MENSUAL = 2
 
 ALCANCE = "solo carrera"
 
@@ -79,6 +84,53 @@ def _tendencia_mes(
     }
 
 
+def _clasificar_sesiones(
+    rango: RangoSemana, plan: PlanSemanal | None, sesiones: Sequence[SesionReal]
+) -> tuple[float | None, dict[str, Any]]:
+    """(km del largo de la semana, detalle de calidad), segun lo prescrito.
+
+    El tipo de una corrida real (tempo, series, fartlek, largo...) no existe en
+    la fuente: solo el plan lo declara. Se clasifica cada corrida por lo que el
+    plan pedia ESE dia, el mismo criterio que ya usa `tipo_plan` en
+    `engine/adherencia.py`. Sin plan esa semana no hay con que clasificar, y se
+    dice explicitamente en vez de adivinar a partir del ritmo o la distancia.
+    """
+    calidad_km = {t: 0.0 for t in TIPOS_CALIDAD}
+    n_calidad = 0
+    if plan is None:
+        return None, {**calidad_km, "n_sesiones": n_calidad, "km": 0.0}
+
+    por_fecha: dict[date, list[SesionReal]] = {}
+    for s in sesiones:
+        por_fecha.setdefault(s.fecha, []).append(s)
+
+    largo_km: float | None = None
+    for i, letra in enumerate(ORDEN_DIAS):
+        fecha = rango.inicio + timedelta(days=i)
+        corridas_plan = [s for s in plan.dia(letra) if not s.es_fuerza and s.tipo != "rest"]
+        if not corridas_plan:
+            continue
+        reales = por_fecha.get(fecha, [])
+        if not reales:
+            continue
+        km_real = round(sum(s.distancia_km or 0.0 for s in reales), 2)
+        # Con mas de una corrida planificada el dia el tipo de la principal
+        # manda, igual que `tipo_plan` en adherencia: no hay como saber cual
+        # actividad real corresponde a cual linea del plan.
+        tipo = corridas_plan[0].tipo
+        if tipo == "long":
+            largo_km = (largo_km or 0.0) + km_real
+        elif tipo in calidad_km:
+            calidad_km[tipo] += km_real
+            n_calidad += 1
+
+    return largo_km, {
+        **{t: round(v, 2) for t, v in calidad_km.items()},
+        "n_sesiones": n_calidad,
+        "km": round(sum(calidad_km.values()), 2),
+    }
+
+
 def _semana(
     rango: RangoSemana,
     repo: Repo,
@@ -109,6 +161,8 @@ def _semana(
         vueltas=repo.vueltas_entre(rango.inicio, rango.fin),
     )
 
+    largo_km, calidad = _clasificar_sesiones(rango, plan, sesiones)
+
     km = round(sum(s.distancia_km or 0.0 for s in sesiones), 1)
     return {
         "lunes": rango.clave,
@@ -122,6 +176,8 @@ def _semana(
         # None (no 0.0) cuando la semana no tenia plan: no es 0% de adherencia.
         "adherencia_pct": r_adh.pct_global if plan else None,
         "con_plan": plan is not None,
+        "largo_km": largo_km,
+        "calidad": calidad,
     }
 
 
@@ -208,16 +264,88 @@ def _adherencia(semanas: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _largos_mes(semanas: list[dict[str, Any]]) -> dict[str, Any]:
+    """El largo semanal a lo largo del mes, tal como lo clasifico `_semana`."""
+    con_dato = [s["largo_km"] for s in semanas if s["largo_km"] is not None]
+    return {
+        "por_semana": [{"lunes": s["lunes"], "km": s["largo_km"]} for s in semanas],
+        "promedio_km": _promedio(con_dato),
+        "maximo_km": round(max(con_dato), 1) if con_dato else None,
+        "semanas_con_largo": len(con_dato),
+        "disponible": bool(con_dato),
+        "motivo": (
+            ""
+            if con_dato
+            else "ninguna semana del mes tenia un 'largo' prescrito en el plan, "
+            "o no habia plan cargado con que identificarlo"
+        ),
+    }
+
+
+def _calidad_mes(semanas: list[dict[str, Any]], total_km_mes: float) -> dict[str, Any]:
+    """Sesiones de tempo/series/fartlek del mes: cuantas y que parte del volumen."""
+    por_tipo = {
+        t: round(sum(s["calidad"][t] for s in semanas), 2) for t in TIPOS_CALIDAD
+    }
+    km_total = round(sum(por_tipo.values()), 2)
+    n_sesiones = sum(s["calidad"]["n_sesiones"] for s in semanas)
+    semanas_sin_plan = sum(1 for s in semanas if not s["con_plan"])
+    disponible = semanas_sin_plan < len(semanas) if semanas else False
+    return {
+        **{f"{t}_km": v for t, v in por_tipo.items()},
+        "km_total": km_total,
+        "n_sesiones": n_sesiones,
+        "pct_volumen_total": (
+            round(km_total / total_km_mes * 100, 1) if total_km_mes else None
+        ),
+        "semanas_sin_plan": semanas_sin_plan,
+        "disponible": disponible,
+        "motivo": (
+            ""
+            if disponible
+            else "ninguna semana del mes tenia plan cargado: no se pudo "
+            "clasificar las sesiones por tipo"
+        ),
+    }
+
+
+def _cambios_dinamica(dinamica: dict[str, Any], umbrales: Umbrales) -> list[str]:
+    """Metricas de dinamica cuyo cambio mes-contra-mes supera el umbral.
+
+    Devuelve frases listas para el reporte, no solo los nombres: el gatillo del
+    segundo mensaje mensual (fatiga y dinamica) tiene que poder explicarse sin
+    volver a mirar el JSON.
+    """
+    revisar = (
+        ("cadencia", "cadencia", umbrales.cadencia_cambio_spm),
+        ("gct", "GCT", umbrales.gct_cambio_ms),
+        ("oscilacion_vertical", "oscilacion vertical", umbrales.oscilacion_vertical_cambio_cm),
+        ("ratio_vertical", "ratio vertical", umbrales.ratio_vertical_cambio_pct),
+    )
+    motivos = []
+    for clave, nombre, umbral in revisar:
+        d = dinamica[clave]
+        if d["delta"] is not None and abs(d["delta"]) >= umbral:
+            signo = "+" if d["delta"] > 0 else ""
+            motivos.append(
+                f"{nombre} cambio {signo}{d['delta']:g} {d['unidad']} respecto al "
+                f"mes anterior (umbral {umbral:g})"
+            )
+    return motivos
+
+
 def _fatiga_mensual(
     bienestar: Sequence[BienestarDia],
     bienestar_previo: Sequence[BienestarDia],
     semanas_fuente: list[dict[str, Any]],
     cfg: config.Bienestar,
-) -> dict[str, Any]:
-    """Tendencia de bienestar del mes contra el mes anterior.
+) -> tuple[dict[str, Any], tuple[str, ...]]:
+    """Tendencia de bienestar del mes contra el mes anterior, y sus alertas.
 
     Se reusa el mismo modulo del semanal, con la ventana de un mes: la regla de
-    no fusionar bienestar y carga vale igual aca.
+    no fusionar bienestar y carga vale igual aca. Las alertas se devuelven
+    aparte (no las trae `to_json`) porque alimentan el gatillo del segundo
+    mensaje mensual, ademas de la lista `alertas` de siempre.
     """
     degradadas = [s for s in semanas_fuente if s.get("fallback")]
     r = m_fatiga.calcular(
@@ -235,7 +363,7 @@ def _fatiga_mensual(
     )
     if degradadas:
         d["semanas_sin_bienestar"] = [s["semana"] for s in degradadas]
-    return d
+    return d, r.alertas
 
 
 def construir(
@@ -300,6 +428,10 @@ def construir(
 
     r_acwr_mes = _serie(semanas, "acwr", "acwr_confiable")
     r_mono_mes = _serie(semanas, "monotony", "monotony_confiable")
+    volumen = _volumen(semanas, km_previo)
+    fatiga_descanso, alertas_fatiga = _fatiga_mensual(
+        bienestar, bienestar_previo, fuentes, config.BIENESTAR
+    )
 
     alertas: list[str] = []
     if r_acwr_mes["maximo"] is not None and r_acwr_mes["maximo"] > umbrales.acwr_alto:
@@ -312,6 +444,12 @@ def construir(
             f"Monotony maximo del mes {r_mono_mes['maximo']} sobre el umbral "
             f"{umbrales.monotony_alta}"
         )
+    alertas.extend(alertas_fatiga)
+
+    # Gatillo del segundo mensaje mensual (fatiga y dinamica): solo se envia si
+    # hubo algo que amerite revisarlo, no en cada corrida (spec del atleta).
+    cambios_dinamica = _cambios_dinamica(dinamica, umbrales)
+    motivos_mensaje2 = list(alertas) + cambios_dinamica
 
     return {
         "version": VERSION_REPORTE_MENSUAL,
@@ -330,7 +468,7 @@ def construir(
                 "cifras de abajo"
             ),
         },
-        "volumen": _volumen(semanas, km_previo),
+        "volumen": volumen,
         "carga": {
             "total": round(sum(s["carga"] or 0.0 for s in semanas), 1),
             "por_semana": [{"lunes": s["lunes"], "carga": s["carga"]} for s in semanas],
@@ -339,11 +477,15 @@ def construir(
         "acwr": r_acwr_mes,
         "monotony": r_mono_mes,
         "adherencia": _adherencia(semanas),
+        "largos": _largos_mes(semanas),
+        "calidad": _calidad_mes(semanas, volumen["total_km"]),
         "dinamica": dinamica,
-        "fatiga_descanso": _fatiga_mensual(
-            bienestar, bienestar_previo, fuentes, config.BIENESTAR
-        ),
+        "fatiga_descanso": fatiga_descanso,
         "carrera": carrera.contexto() if carrera is not None else None,
+        "revisar_fatiga_dinamica": {
+            "relevante": bool(motivos_mensaje2),
+            "motivos": motivos_mensaje2,
+        },
         "fuentes_usadas": [
             {"semana": f["semana"], "fuente": f["fuente"], "fallback": f["fallback"]}
             for f in fuentes
@@ -354,6 +496,10 @@ def construir(
             "acwr_alto": umbrales.acwr_alto,
             "acwr_bajo": umbrales.acwr_bajo,
             "monotony_alta": umbrales.monotony_alta,
+            "cadencia_cambio_spm": umbrales.cadencia_cambio_spm,
+            "gct_cambio_ms": umbrales.gct_cambio_ms,
+            "oscilacion_vertical_cambio_cm": umbrales.oscilacion_vertical_cambio_cm,
+            "ratio_vertical_cambio_pct": umbrales.ratio_vertical_cambio_pct,
             "nota": "valores de literatura general, no calibrados a este atleta",
         },
     }

@@ -1,12 +1,17 @@
-"""Reporte mensual: agregados de 4-5 semanas, solo de carrera, un solo mensaje.
+"""Reporte mensual: agregados de 4-5 semanas, solo de carrera, DOS mensajes.
 
-Dos cosas se prueban con especial insistencia:
+Cosas que se prueban con especial insistencia:
 
 - **el alcance**: el mensual mide carrera y nada mas. Un mes con fuerza y bici
   no puede colar esos kilometros en el volumen mensual;
 - **la idempotencia del disparo**: el mensual sale una vez al mes, y una
   corrida repetida, un `--semana` retroactivo o un reintento tras un fallo no
-  pueden mandarlo dos veces.
+  pueden mandarlo dos veces;
+- **la clasificacion de largos y calidad**: solo el plan dice que corrida fue
+  un largo, un tempo, una serie o un fartlek, asi que sin plan no hay con que
+  clasificar y el reporte lo dice en vez de adivinar;
+- **el gatillo del segundo mensaje**: fatiga y dinamica solo se manda cuando el
+  motor detecto una variacion relevante contra el mes anterior.
 """
 from __future__ import annotations
 
@@ -20,13 +25,14 @@ from sport_report.db.models import BienestarDia, SesionReal
 from sport_report.db.repo import Repo
 from sport_report.engine import mensual as m_mensual
 from sport_report.fechas import mes_de, semana_de, semanas_del_mes
-from sport_report.narrative.claude import Narrativa
+from sport_report.narrative.claude import Narrativa, verificar_atribucion
 from sport_report.narrative.mensual import (
     METRICAS_MENSUALES,
-    SISTEMA_MENSUAL,
-    redactar_mensual,
+    SISTEMA_MENSUAL_ACTIVIDAD,
+    SISTEMA_MENSUAL_FISIOLOGIA,
+    redactar_mensual_actividad,
+    redactar_mensual_fisiologia,
 )
-from sport_report.narrative.claude import verificar_atribucion
 from sport_report.plan.carrera import Carrera, CarreraStore
 from sport_report.plan.grammar import parse_plan
 from sport_report.plan.store import PlanStore
@@ -300,7 +306,106 @@ def test_las_alertas_del_mes_miran_el_maximo(entorno):
 
     j = m_mensual.construir(SEPTIEMBRE, repo, store)
     assert isinstance(j["alertas"], list)
-    assert j["version"] == 1
+    assert j["version"] == 2
+
+
+# --------------------------------------------------------------------------
+# Largos y calidad: solo el plan dice que fue cada corrida
+# --------------------------------------------------------------------------
+
+
+def test_el_largo_de_la_semana_sale_del_plan(entorno):
+    repo, store = entorno
+    store.guardar(parse_plan(PLAN_SPEC), semana_de(LUNES_SEP[0]))
+    domingo = LUNES_SEP[0] + timedelta(days=6)  # PLAN_SPEC: D -> long 16km
+    corrida(repo, domingo, 16.0)
+
+    largos = m_mensual.construir(SEPTIEMBRE, repo, store)["largos"]
+    assert largos["por_semana"][0] == {"lunes": "2026-09-07", "km": 16.0}
+    assert largos["por_semana"][1]["km"] is None, "sin plan esa semana no hay largo"
+    assert largos["semanas_con_largo"] == 1
+    assert largos["promedio_km"] == 16.0
+    assert largos["maximo_km"] == 16.0
+    assert largos["disponible"] is True
+
+
+def test_sin_ningun_plan_el_largo_no_se_puede_clasificar(entorno):
+    repo, store = entorno
+    _semanas_con(repo, [30.0, 35.0])
+
+    largos = m_mensual.construir(SEPTIEMBRE, repo, store)["largos"]
+    assert largos["disponible"] is False
+    assert all(s["km"] is None for s in largos["por_semana"])
+    assert "no habia plan" in largos["motivo"] or "prescrito" in largos["motivo"]
+
+
+def test_la_calidad_cuenta_las_sesiones_de_series_del_plan(entorno):
+    repo, store = entorno
+    store.guardar(parse_plan(PLAN_SPEC), semana_de(LUNES_SEP[0]))
+    jueves = LUNES_SEP[0] + timedelta(days=3)  # PLAN_SPEC: J -> series 8.6km
+    corrida(repo, jueves, 9.0)  # el real trae la recuperacion, el plan no
+
+    calidad = m_mensual.construir(SEPTIEMBRE, repo, store)["calidad"]
+    assert calidad["series_km"] == 9.0
+    assert calidad["tempo_km"] == 0.0
+    assert calidad["fartlek_km"] == 0.0
+    assert calidad["n_sesiones"] == 1
+    assert calidad["km_total"] == 9.0
+    assert calidad["pct_volumen_total"] == 100.0  # unica corrida del mes
+    assert calidad["disponible"] is True
+
+
+def test_dias_sin_corrida_no_cuentan_como_sesion_de_calidad(entorno):
+    """El plan prescribe series el jueves, pero esa semana no se corrio nada."""
+    repo, store = entorno
+    store.guardar(parse_plan(PLAN_SPEC), semana_de(LUNES_SEP[0]))
+    calidad = m_mensual.construir(SEPTIEMBRE, repo, store)["calidad"]
+    assert calidad["n_sesiones"] == 0
+    assert calidad["km_total"] == 0.0
+
+
+def test_sin_ningun_plan_la_calidad_no_es_confiable(entorno):
+    repo, store = entorno
+    _semanas_con(repo, [30.0, 35.0])
+    calidad = m_mensual.construir(SEPTIEMBRE, repo, store)["calidad"]
+    assert calidad["disponible"] is False
+    assert "no se pudo" in calidad["motivo"]
+
+
+# --------------------------------------------------------------------------
+# El gatillo del segundo mensaje (fatiga y dinamica)
+# --------------------------------------------------------------------------
+
+
+def test_sin_variaciones_el_segundo_mensaje_no_es_relevante(entorno):
+    repo, store = entorno
+    _semanas_con(repo, [30.0, 35.0, 40.0, 45.0])
+    j = m_mensual.construir(SEPTIEMBRE, repo, store)
+    assert j["revisar_fatiga_dinamica"] == {"relevante": False, "motivos": []}
+
+
+def test_un_cambio_de_dinamica_dispara_el_segundo_mensaje(entorno):
+    repo, store = entorno
+    _semanas_con(repo, [30.0, 35.0])
+    # El mes anterior tenia GCT 240.0; este mes es 232.0 (default de `corrida`):
+    # delta -8.0, justo en el umbral (config.UMBRALES.gct_cambio_ms == 8.0).
+    corrida(repo, date(2026, 8, 11), 30.0, gct_ms=240.0)
+
+    j = m_mensual.construir(SEPTIEMBRE, repo, store)
+    assert j["revisar_fatiga_dinamica"]["relevante"] is True
+    assert any("GCT" in m for m in j["revisar_fatiga_dinamica"]["motivos"])
+
+
+def test_una_alerta_de_acwr_o_monotony_dispara_el_segundo_mensaje(entorno):
+    repo, store = entorno
+    for i in range(40):
+        corrida(repo, SEPTIEMBRE.inicio - timedelta(days=40) + timedelta(days=i), 8.0)
+    corrida(repo, LUNES_SEP[1] + timedelta(days=1), 40.0)
+
+    j = m_mensual.construir(SEPTIEMBRE, repo, store)
+    if j["alertas"]:
+        assert j["revisar_fatiga_dinamica"]["relevante"] is True
+        assert set(j["alertas"]) <= set(j["revisar_fatiga_dinamica"]["motivos"])
 
 
 # --------------------------------------------------------------------------
@@ -372,6 +477,7 @@ def _narrador_mensual(texto="Mes solido, solo carrera."):
 
 
 def test_el_mensual_va_en_un_mensaje_aparte_sin_grafico(tmp_path):
+    """Sin variaciones relevantes, el mensual son SEMANAL + ACTIVIDAD: dos mensajes."""
     repo, store, semana = _entorno_semana(tmp_path)
     buzon = Buzon()
     fotos = []
@@ -385,12 +491,13 @@ def test_el_mensual_va_en_un_mensaje_aparte_sin_grafico(tmp_path):
         enviador_foto=lambda ruta, caption="": fotos.append(ruta) or True,
         guardar=False,
         mensual=SEPTIEMBRE,
-        narrador_mensual=_narrador_mensual(),
+        narrador_mensual_actividad=_narrador_mensual(),
         carrera_store=CarreraStore(ruta=tmp_path / "carrera.json"),
     )
     repo.cerrar()
 
     assert r.estado == OK
+    assert not r.datos_mensuales["revisar_fatiga_dinamica"]["relevante"]
     assert len(buzon.mensajes) == 2, "el mensual tiene que ir en su propio mensaje"
     assert "REPORTE SEMANAL" in buzon.mensajes[0]
     assert "REPORTE MENSUAL" in buzon.mensajes[1]
@@ -401,6 +508,55 @@ def test_el_mensual_va_en_un_mensaje_aparte_sin_grafico(tmp_path):
     # Un solo grafico, el del semanal.
     assert len(fotos) == 1
     assert r.mensual == "2026-09"
+
+
+def test_con_variaciones_relevantes_va_un_tercer_mensaje(tmp_path):
+    repo, store, semana = _entorno_semana(tmp_path)
+    corrida(repo, date(2026, 8, 11), 30.0, gct_ms=240.0)  # dispara el gatillo de GCT
+    buzon = Buzon()
+
+    r = ejecutar(
+        semana,
+        repo,
+        store,
+        narrador=None,
+        enviador=buzon,
+        guardar=False,
+        mensual=SEPTIEMBRE,
+        narrador_mensual_actividad=_narrador_mensual("Actividad del mes."),
+        narrador_mensual_fisiologia=_narrador_mensual("Fatiga y dinamica del mes."),
+        carrera_store=CarreraStore(ruta=tmp_path / "carrera.json"),
+    )
+    repo.cerrar()
+
+    assert r.datos_mensuales["revisar_fatiga_dinamica"]["relevante"] is True
+    assert len(buzon.mensajes) == 3
+    assert "REPORTE MENSUAL" in buzon.mensajes[1] and "Actividad del mes." in buzon.mensajes[1]
+    assert "fatiga y dinamica" in buzon.mensajes[2]
+    assert "Fatiga y dinamica del mes." in buzon.mensajes[2]
+
+
+def test_sin_variaciones_relevantes_no_se_llama_al_narrador_de_fisiologia(tmp_path):
+    """El motor ya decidio que no hace falta: no vale la pena gastar la llamada."""
+    repo, store, semana = _entorno_semana(tmp_path)
+    llamado = []
+
+    r = ejecutar(
+        semana,
+        repo,
+        store,
+        narrador=None,
+        enviador=Buzon(),
+        guardar=False,
+        mensual=SEPTIEMBRE,
+        narrador_mensual_actividad=_narrador_mensual(),
+        narrador_mensual_fisiologia=lambda d: llamado.append(1) or Narrativa(texto="x"),
+        carrera_store=CarreraStore(ruta=tmp_path / "carrera.json"),
+    )
+    repo.cerrar()
+
+    assert not r.datos_mensuales["revisar_fatiga_dinamica"]["relevante"]
+    assert llamado == []
 
 
 def test_sin_mensual_solo_va_el_semanal(tmp_path):
@@ -425,7 +581,7 @@ def test_el_json_mensual_se_guarda_en_disco(tmp_path, monkeypatch):
         enviador=Buzon(),
         guardar=True,
         mensual=SEPTIEMBRE,
-        narrador_mensual=_narrador_mensual(),
+        narrador_mensual_actividad=_narrador_mensual(),
         carrera_store=CarreraStore(ruta=tmp_path / "carrera.json"),
     )
     repo.cerrar()
@@ -449,7 +605,7 @@ def test_si_la_narrativa_mensual_falla_el_semanal_ya_salio(tmp_path):
         enviador=buzon,
         guardar=False,
         mensual=SEPTIEMBRE,
-        narrador_mensual=lambda d: Narrativa(texto=None, error="APIConnectionError"),
+        narrador_mensual_actividad=lambda d: Narrativa(texto=None, error="APIConnectionError"),
         carrera_store=CarreraStore(ruta=tmp_path / "carrera.json"),
     )
     repo.cerrar()
@@ -468,7 +624,7 @@ def test_si_el_motor_mensual_revienta_el_semanal_no_cae(tmp_path, monkeypatch):
 
     r = ejecutar(
         semana, repo, store, narrador=None, enviador=buzon, guardar=False,
-        mensual=SEPTIEMBRE, narrador_mensual=_narrador_mensual(),
+        mensual=SEPTIEMBRE, narrador_mensual_actividad=_narrador_mensual(),
     )
     repo.cerrar()
 
@@ -482,7 +638,7 @@ def test_si_el_semanal_no_se_pudo_enviar_no_se_manda_el_mensual(tmp_path):
     repo, store, semana = _entorno_semana(tmp_path)
     r = ejecutar(
         semana, repo, store, narrador=None, enviador=Buzon(ok=False), guardar=False,
-        mensual=SEPTIEMBRE, narrador_mensual=_narrador_mensual(),
+        mensual=SEPTIEMBRE, narrador_mensual_actividad=_narrador_mensual(),
     )
     repo.cerrar()
     assert r.datos_mensuales == {}
@@ -501,69 +657,99 @@ MENSUAL_JSON = {
     "acwr": {"promedio": 1.1, "maximo": 1.3, "confiable": True, "motivo": ""},
     "monotony": {"promedio": 1.5, "maximo": 1.8, "confiable": True, "motivo": ""},
     "adherencia": {"promedio_pct": 92.0, "semanas_con_plan": 4, "semanas_sin_plan": 0},
+    "largos": {"promedio_km": 17.5, "maximo_km": 18.0, "semanas_con_largo": 4,
+               "disponible": True, "motivo": "",
+               "por_semana": [{"lunes": "2026-09-07", "km": 17.0}]},
+    "calidad": {"tempo_km": 12.0, "series_km": 8.6, "fartlek_km": 0.0, "km_total": 20.6,
+                "n_sesiones": 3, "pct_volumen_total": 13.7, "semanas_sin_plan": 0,
+                "disponible": True, "motivo": ""},
     "dinamica": {
-        "cadencia": {"valor": 176.0, "mes_anterior": 174.0, "delta": 2.0},
-        "gct": {"valor": 232.0, "mes_anterior": 240.0, "delta": -8.0},
-        "oscilacion_vertical": {"valor": 8.4, "mes_anterior": 8.1, "delta": 0.3},
-        "ratio_vertical": {"valor": 7.9, "mes_anterior": 7.6, "delta": 0.3},
+        "cadencia": {"valor": 176.0, "mes_anterior": 174.0, "delta": 2.0, "unidad": "spm"},
+        "gct": {"valor": 232.0, "mes_anterior": 240.0, "delta": -8.0, "unidad": "ms"},
+        "oscilacion_vertical": {"valor": 8.4, "mes_anterior": 8.1, "delta": 0.3, "unidad": "cm"},
+        "ratio_vertical": {"valor": 7.9, "mes_anterior": 7.6, "delta": 0.3, "unidad": "%"},
     },
     "fatiga_descanso": {"hrv": {"valor": 64.0, "semana_anterior": 70.0, "delta": -6.0}},
     "carrera": {"fecha": "2026-11-15", "nombre": "Maraton", "semanas_restantes": 6,
                 "fase": "construccion", "nota": "a 6 semanas"},
+    "revisar_fatiga_dinamica": {"relevante": True, "motivos": ["GCT cambio -8 ms"]},
     "alertas": [],
     "avisos_datos": [],
-    "umbrales": {"acwr_alto": 1.5, "acwr_bajo": 0.8, "monotony_alta": 2.0},
+    "umbrales": {"acwr_alto": 1.5, "acwr_bajo": 0.8, "monotony_alta": 2.0,
+                 "cadencia_cambio_spm": 3.0, "gct_cambio_ms": 8.0,
+                 "oscilacion_vertical_cambio_cm": 0.5, "ratio_vertical_cambio_pct": 0.5},
 }
 
 
-def test_el_prompt_mensual_declara_el_alcance_y_las_prohibiciones():
-    assert "SOLO CARRERA" in SISTEMA_MENSUAL
-    # El salto de linea del prompt puede caer en medio de la frase.
-    assert "en la primera" in SISTEMA_MENSUAL and "linea" in SISTEMA_MENSUAL
-    assert "NUNCA combines el bienestar" in SISTEMA_MENSUAL
-    assert "no calcules" in SISTEMA_MENSUAL.lower()
-    assert "8 a 12 lineas" in SISTEMA_MENSUAL
+def test_el_prompt_de_actividad_declara_el_alcance_y_las_prohibiciones():
+    assert "SOLO CARRERA" in SISTEMA_MENSUAL_ACTIVIDAD
+    assert "en la primera" in SISTEMA_MENSUAL_ACTIVIDAD and "linea" in SISTEMA_MENSUAL_ACTIVIDAD
+    assert "no calcules" in SISTEMA_MENSUAL_ACTIVIDAD.lower()
+    assert "6 a 10 lineas" in SISTEMA_MENSUAL_ACTIVIDAD
+    # El primer mensaje no habla de fatiga ni de dinamica: eso va en el otro.
+    assert "no hables de fatiga" in SISTEMA_MENSUAL_ACTIVIDAD.lower()
 
 
-def test_el_prompt_mensual_dice_que_la_serie_ya_viene_derivada():
+def test_el_prompt_de_fisiologia_solo_se_manda_cuando_hay_variacion():
+    assert "SOLO CARRERA" in SISTEMA_MENSUAL_FISIOLOGIA
+    assert "NUNCA combines el bienestar" in SISTEMA_MENSUAL_FISIOLOGIA
+    assert "revisar_fatiga_dinamica" in SISTEMA_MENSUAL_FISIOLOGIA
+    assert "5 a 8 lineas" in SISTEMA_MENSUAL_FISIOLOGIA
+
+
+def test_los_prompts_mensuales_dicen_que_la_serie_ya_viene_derivada():
     """Es lo que evita que el modelo calcule la progresion por su cuenta."""
-    assert "ya esta calculado" in SISTEMA_MENSUAL
-    assert "citar e interpretar" in SISTEMA_MENSUAL
+    for sistema in (SISTEMA_MENSUAL_ACTIVIDAD, SISTEMA_MENSUAL_FISIOLOGIA):
+        assert "ya esta calculado" in sistema
+        assert "citar e interpretar" in sistema
 
 
-def test_la_narrativa_mensual_usa_el_modelo_configurado():
+def test_la_narrativa_de_actividad_usa_el_modelo_configurado():
     cliente = ClienteFalso(Respuesta("Mes de solo carrera: 150.0 km."))
-    n = redactar_mensual(MENSUAL_JSON, cliente=cliente)
+    n = redactar_mensual_actividad(MENSUAL_JSON, cliente=cliente)
     assert n.ok
     assert n.modelo == config.ANTHROPIC_MODEL_MENSUAL == "claude-sonnet-5"
     assert cliente.llamadas[0]["model"] == "claude-sonnet-5"
 
 
-def test_la_narrativa_mensual_manda_la_serie_semanal():
-    """Al revés que el semanal: aca la serie ES el contenido."""
+def test_la_narrativa_de_actividad_manda_la_serie_semanal():
+    """Al reves que el semanal: aca la serie ES el contenido."""
     cliente = ClienteFalso(Respuesta("ok"))
-    redactar_mensual(MENSUAL_JSON, cliente=cliente)
+    redactar_mensual_actividad(MENSUAL_JSON, cliente=cliente)
     cuerpo = cliente.llamadas[0]["messages"][0]["content"]
     assert "por_semana" in cuerpo and "2026-09-07" in cuerpo
 
 
-def test_una_cifra_inventada_en_el_mensual_se_detecta():
+def test_una_cifra_inventada_en_la_actividad_se_detecta():
     cliente = ClienteFalso(Respuesta("Corriste 999.9 km en el mes."))
-    n = redactar_mensual(MENSUAL_JSON, cliente=cliente)
+    n = redactar_mensual_actividad(MENSUAL_JSON, cliente=cliente)
     assert n.ok  # el texto no se descarta
     assert "999.9" in " ".join(n.numeros_no_verificados)
 
 
-def test_una_cifra_mal_atribuida_en_el_mensual_se_detecta():
+def test_una_cifra_mal_atribuida_en_la_actividad_se_detecta():
     """1.8 es el maximo de Monotony, no un valor de ACWR.
 
     (1.5 no serviria de ejemplo: es el umbral acwr_alto, y por lo tanto una
     cifra legitima al lado de la palabra ACWR.)
     """
     cliente = ClienteFalso(Respuesta("El ACWR promedio del mes fue 1.8."))
-    n = redactar_mensual(MENSUAL_JSON, cliente=cliente)
+    n = redactar_mensual_actividad(MENSUAL_JSON, cliente=cliente)
     assert n.cifras_mal_atribuidas
     assert n.cifras_mal_atribuidas[0].startswith("ACWR")
+
+
+def test_la_narrativa_de_fisiologia_usa_el_modelo_configurado():
+    cliente = ClienteFalso(Respuesta("El GCT bajo 8.0 ms este mes."))
+    n = redactar_mensual_fisiologia(MENSUAL_JSON, cliente=cliente)
+    assert n.ok
+    assert n.modelo == config.ANTHROPIC_MODEL_MENSUAL
+
+
+def test_una_cifra_inventada_en_la_fisiologia_se_detecta():
+    cliente = ClienteFalso(Respuesta("El HRV bajo hasta 111.1."))
+    n = redactar_mensual_fisiologia(MENSUAL_JSON, cliente=cliente)
+    assert "111.1" in " ".join(n.numeros_no_verificados)
 
 
 def test_las_rutas_mensuales_son_las_del_json_mensual():
@@ -578,6 +764,19 @@ def test_las_rutas_mensuales_son_las_del_json_mensual():
     ) == []
     assert verificar_atribucion(
         "El GCT bajo a 232.0 ms.", MENSUAL_JSON, METRICAS_MENSUALES
+    ) == []
+
+
+def test_citar_el_largo_y_la_calidad_es_legitimo():
+    assert verificar_atribucion(
+        "El largo promedio fue 17.5 km, con un maximo de 18.0.",
+        MENSUAL_JSON,
+        METRICAS_MENSUALES,
+    ) == []
+    assert verificar_atribucion(
+        "Hiciste 3 sesiones de calidad por 20.6 km, un 13.7% del volumen.",
+        MENSUAL_JSON,
+        METRICAS_MENSUALES,
     ) == []
 
 
@@ -597,15 +796,16 @@ def test_la_narrativa_mensual_nunca_lanza():
             def create(**kw):
                 raise RuntimeError("500")
 
-    n = redactar_mensual(MENSUAL_JSON, cliente=ClienteRoto())
+    n = redactar_mensual_actividad(MENSUAL_JSON, cliente=ClienteRoto())
     assert n.ok is False and "500" in n.error
+    n2 = redactar_mensual_fisiologia(MENSUAL_JSON, cliente=ClienteRoto())
+    assert n2.ok is False and "500" in n2.error
 
 
 def test_un_rechazo_del_modelo_no_es_un_texto_vacio():
     cliente = ClienteFalso(Respuesta("", stop_reason="refusal"))
-    n = redactar_mensual(MENSUAL_JSON, cliente=cliente)
+    n = redactar_mensual_actividad(MENSUAL_JSON, cliente=cliente)
     assert n.ok is False and "rechazo" in n.error
-
 
 
 def test_el_modelo_puede_citar_el_rango_de_una_serie_semanal():

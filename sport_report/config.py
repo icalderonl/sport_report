@@ -65,6 +65,13 @@ class Umbrales:
     # una banda estrecha esos dias se contaban como incumplimiento.
     adherencia_min_pct: float = 80.0
     adherencia_max_pct: float = 120.0
+    # Cambios mes contra mes en dinamica de carrera que ameritan el segundo
+    # mensaje del reporte mensual (fatiga y dinamica). Literatura general, no
+    # calibrados a este atleta, igual que el resto de estos umbrales.
+    cadencia_cambio_spm: float = 3.0
+    gct_cambio_ms: float = 8.0
+    oscilacion_vertical_cambio_cm: float = 0.5
+    ratio_vertical_cambio_pct: float = 0.5
 
 
 @dataclass(frozen=True)

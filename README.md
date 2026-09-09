@@ -9,8 +9,11 @@ Telegram el reporte de la semana de running que acaba de cerrar: adherencia al
 plan, carga (ACWR, Monotony/Strain), deriva cardíaca, dinámica de carrera (GCT,
 oscilación y ratio vertical), fatiga y descanso, un gráfico del volumen de las
 últimas 16 semanas y un resumen narrativo generado por IA **sobre esas cifras ya
-calculadas**. Una vez al mes añade un reporte mensual, **solo de carrera**,
-narrado por un modelo más capaz.
+calculadas**. Una vez al mes añade el reporte mensual, **solo de carrera**,
+narrado por un modelo más capaz y partido en dos mensajes: **actividad**
+(volumen, adherencia, largos de la semana y comparativa de calidad
+tempo/series/fartlek, siempre) y **fatiga y dinámica** (solo si hubo una
+variación relevante contra el mes anterior).
 
 Fuente de datos: **intervals.icu**, con **Strava como respaldo** si esa falla.
 El plan se carga a mano por Telegram.
@@ -189,6 +192,16 @@ entra al prompt —es el contenido del mes—, y por eso todo lo derivable
 modelo cita, no deriva. Se dispara en la primera corrida del mes nuevo con dos
 guardas, la de calendario y la de que el archivo del mes no exista, que es la
 que hace la decisión idempotente.
+
+**El mensual manda dos mensajes, no uno.** El primero (actividad) siempre:
+volumen, adherencia, el largo de cada semana —clasificado por lo que el plan
+prescribía ese día, la fuente no expone el tipo de una corrida— y la
+comparativa de tempo/series/fartlek (cuántas sesiones y qué porcentaje del
+volumen). El segundo (fatiga y dinámica) solo si el motor detectó una
+variación relevante contra el mes anterior en ACWR, Monotony, cadencia, GCT,
+oscilación o ratio vertical: el gatillo lo calcula Python
+(`revisar_fatiga_dinamica` en el JSON), no el modelo, así que una corrida sin
+nada que reportar ahí ni siquiera gasta la llamada a la API.
 
 **Un día del plan puede tener varias sesiones.** Con una sola, la adherencia se
 comporta exactamente como antes. Con varias se suman en la unidad común; si el

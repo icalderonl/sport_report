@@ -41,7 +41,7 @@ from .fechas import (
 from .fuentes.comun import IngestaBase
 from .logging_setup import setup
 from .narrative.claude import redactar
-from .narrative.mensual import redactar_mensual
+from .narrative.mensual import redactar_mensual_actividad, redactar_mensual_fisiologia
 from .plan.carrera import CarreraStore
 from .plan.store import PlanStore
 from .telegram.formato import formatear_reporte
@@ -124,7 +124,8 @@ def ejecutar(
     guardar: bool = True,
     seleccionar: Callable[[], "fuentes.ResultadoFuente"] | None = None,
     mensual: MesRango | None = None,
-    narrador_mensual: Callable[[dict], Any] | None = redactar_mensual,
+    narrador_mensual_actividad: Callable[[dict], Any] | None = redactar_mensual_actividad,
+    narrador_mensual_fisiologia: Callable[[dict], Any] | None = redactar_mensual_fisiologia,
     carrera_store: "CarreraStore | None" = None,
 ) -> Resultado:
     """Corre el pipeline completo. No lanza salvo un fallo del motor de calculo."""
@@ -258,9 +259,11 @@ def ejecutar(
             problemas.append("no se pudo enviar el grafico de volumen")
 
     # 6. Reporte mensual --------------------------------------------------
-    # Un unico mensaje narrado, sin datos crudos ni grafico (spec 7bis). Todo
-    # el bloque va envuelto: un fallo aca degrada la corrida a parcial pero no
-    # puede tumbar el semanal, que ya se envio.
+    # Dos mensajes narrados, sin datos crudos ni grafico (spec 7bis): actividad
+    # (siempre) y fatiga/dinamica (solo si el motor detecto una variacion
+    # relevante contra el mes anterior). Todo el bloque va envuelto: un fallo
+    # aca degrada la corrida a parcial pero no puede tumbar el semanal, que ya
+    # se envio.
     datos_mensuales: dict[str, Any] | None = None
     if mensual is not None and enviado:
         try:
@@ -275,31 +278,66 @@ def ejecutar(
 
                 escribir_json(ruta_mensual(mensual), datos_mensuales)
 
-            texto_mensual = None
-            if narrador_mensual is not None:
-                nm = narrador_mensual(datos_mensuales)
-                if nm.ok:
-                    texto_mensual = nm.texto
-                    datos_mensuales["narrativa"] = nm.to_json()
-                    if guardar:
-                        escribir_json(ruta_mensual(mensual), datos_mensuales)
-                    if nm.numeros_no_verificados:
-                        log.warning(
-                            "cifras sin respaldo en el mensual: %s",
-                            nm.numeros_no_verificados,
-                        )
-                else:
-                    problemas.append(f"reporte mensual sin narrativa ({nm.error})")
+            def _mensaje_mensual(
+                narrador: Callable[[dict], Any] | None, clave_narrativa: str, etiqueta: str
+            ) -> str | None:
+                if narrador is None:
+                    return None
+                nm = narrador(datos_mensuales)
+                if not nm.ok:
+                    problemas.append(f"reporte mensual sin narrativa ({etiqueta}: {nm.error})")
+                    return None
+                datos_mensuales[clave_narrativa] = nm.to_json()
+                if guardar:
+                    escribir_json(ruta_mensual(mensual), datos_mensuales)
+                if nm.numeros_no_verificados:
+                    log.warning(
+                        "cifras sin respaldo en el mensual (%s): %s",
+                        clave_narrativa,
+                        nm.numeros_no_verificados,
+                    )
+                return nm.texto
 
-            if texto_mensual and enviador is not None:
-                cabecera = f"REPORTE MENSUAL - {mensual.clave} (solo carrera)\n\n"
-                if not enviador(cabecera + texto_mensual):
-                    problemas.append("no se pudo enviar el reporte mensual")
-                else:
-                    log.info("reporte mensual de %s enviado", mensual.clave)
-            elif texto_mensual:
+            texto_actividad = _mensaje_mensual(
+                narrador_mensual_actividad, "narrativa", "actividad"
+            )
+
+            revisar = datos_mensuales.get("revisar_fatiga_dinamica") or {}
+            texto_fisiologia = None
+            if revisar.get("relevante"):
+                texto_fisiologia = _mensaje_mensual(
+                    narrador_mensual_fisiologia, "narrativa_fisiologia", "fatiga y dinamica"
+                )
+
+            cabecera_actividad = f"REPORTE MENSUAL - {mensual.clave} (solo carrera)\n\n"
+            cabecera_fisiologia = (
+                f"REPORTE MENSUAL - {mensual.clave} - fatiga y dinamica\n\n"
+            )
+            if enviador is not None:
+                if texto_actividad:
+                    if not enviador(cabecera_actividad + texto_actividad):
+                        problemas.append("no se pudo enviar el reporte mensual")
+                    else:
+                        log.info("reporte mensual de %s enviado", mensual.clave)
+                if texto_fisiologia:
+                    if not enviador(cabecera_fisiologia + texto_fisiologia):
+                        problemas.append(
+                            "no se pudo enviar el mensual de fatiga y dinamica"
+                        )
+                    else:
+                        log.info(
+                            "mensual de fatiga y dinamica de %s enviado", mensual.clave
+                        )
+            else:
                 # dry-run: se imprime junto al semanal.
-                mensaje += "\n\n" + "=" * 40 + "\n\n" + cabecera_dry(mensual) + texto_mensual
+                if texto_actividad:
+                    mensaje += (
+                        "\n\n" + "=" * 40 + "\n\n" + cabecera_actividad + texto_actividad
+                    )
+                if texto_fisiologia:
+                    mensaje += (
+                        "\n\n" + "=" * 40 + "\n\n" + cabecera_fisiologia + texto_fisiologia
+                    )
         except Exception as exc:  # el mensual nunca puede costar el semanal
             log.exception("el reporte mensual fallo")
             problemas.append(f"reporte mensual no disponible ({exc})")
@@ -321,10 +359,6 @@ def ejecutar(
         mensual=mensual.clave if mensual is not None else "",
         datos_mensuales=datos_mensuales or {},
     )
-
-
-def cabecera_dry(mes: MesRango) -> str:
-    return f"REPORTE MENSUAL - {mes.clave} (solo carrera)\n\n"
 
 
 # --------------------------------------------------------------------------
@@ -441,7 +475,8 @@ def main(argv: list[str] | None = None) -> int:
             enviador=None if a.dry_run else enviar,
             enviador_foto=_mostrar_foto if a.dry_run else enviar_foto,
             mensual=mes,
-            narrador_mensual=None if a.sin_narrativa else redactar_mensual,
+            narrador_mensual_actividad=None if a.sin_narrativa else redactar_mensual_actividad,
+            narrador_mensual_fisiologia=None if a.sin_narrativa else redactar_mensual_fisiologia,
         )
     except Exception as exc:  # el motor de calculo o algo imprevisto
         log.exception("la corrida fallo")
