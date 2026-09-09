@@ -264,6 +264,33 @@ def test_reingerir_no_duplica_ni_vuelve_a_pedir_streams(repo, plan_store):
     assert cli.pedidos_streams == ["i1"], "se volvio a gastar cuota en el stream"
 
 
+def test_reingerir_rellena_un_campo_que_antes_no_se_sabia_leer(repo, plan_store):
+    """El caso real del 2026-09-08, y el motivo de que exista `--reingerir`.
+
+    El GCT llegaba como `average_stance_time` y la tabla de campos no lo
+    conocia, asi que se guardo en NULL. Corregir la tabla no basta: la sesion
+    ya esta en la base y la ingesta la salta para no gastar cuota, de modo que
+    el campo se quedaria nulo para siempre sin una re-ingesta explicita.
+    """
+    act = actividad("i1", "2026-09-07T08:00:00")
+    act.pop("average_gct")
+    ing = _ingesta(ClienteFalso([act]), repo, plan_store)
+    ing.sincronizar(SEMANA.inicio, SEMANA.fin)
+    assert repo.sesion("intervals", "i1").gct_ms is None
+
+    # Llega el nombre bueno. Sin forzar, la sesion guardada ni se mira.
+    act["average_stance_time"] = 251.0
+    cli = ClienteFalso([act])
+    assert _ingesta(cli, repo, plan_store).sincronizar(SEMANA.inicio, SEMANA.fin).reutilizadas == 1
+    assert repo.sesion("intervals", "i1").gct_ms is None
+
+    cli = ClienteFalso([act])
+    r = _ingesta(cli, repo, plan_store).sincronizar(SEMANA.inicio, SEMANA.fin, forzar=True)
+    assert r.reutilizadas == 0
+    assert repo.sesion("intervals", "i1").gct_ms == 251.0
+    assert len(repo.sesiones_entre(SEMANA.inicio, SEMANA.fin)) == 1, "se duplico la sesion"
+
+
 def test_las_zonas_de_intervals_se_cachean_como_confiables(repo, plan_store):
     cli = ClienteFalso([actividad("i1", "2026-09-07T08:00:00")])
     r = _ingesta(cli, repo, plan_store).sincronizar(SEMANA.inicio, SEMANA.fin)

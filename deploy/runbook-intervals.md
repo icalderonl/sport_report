@@ -107,6 +107,18 @@ Con esa salida hay que confirmar tres cosas:
    en `TIPOS_RUN`, sus kilómetros quedan fuera del volumen **en silencio**. El
    arreglo es una línea en `config.TIPOS_RUN`.
 
+Después de tocar `campos.py`, **las sesiones ya guardadas no se arreglan solas**:
+la ingesta se salta una sesión que ya procesó para no gastar cuota, así que el
+campo que antes no se sabía leer se queda en `NULL` para siempre. Hay que volver
+a bajarlas explícitamente:
+
+```bash
+sudo -u sportreport /opt/sport_report/.venv/bin/python -m sport_report.backfill 30 --reingerir
+```
+
+No duplica nada: la clave es `(fuente, id_externo)`, así que reescribe las
+mismas filas con los campos nuevos.
+
 También conviene, una sola vez, comparar los intervalos de una sesión de series
 contra las vueltas que Strava da para la misma actividad:
 

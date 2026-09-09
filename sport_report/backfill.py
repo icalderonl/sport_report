@@ -52,6 +52,15 @@ def _args(argv: list[str] | None):
         choices=(config.INTERVALS, config.STRAVA),
         help="fuente a usar (por defecto, FUENTE_PRINCIPAL del .env)",
     )
+    p.add_argument(
+        "--reingerir",
+        action="store_true",
+        help=(
+            "volver a bajar sesiones ya guardadas. Necesario cuando cambia el "
+            "mapa de campos: una sesion ya procesada se salta, asi que un campo "
+            "que antes no se sabia leer se quedaria nulo para siempre"
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -79,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
     hasta = hoy_local()
     desde = hasta - timedelta(days=a.dias)
     print(f"Backfill de {a.dias} dias desde {nombre}: {desde} a {hasta}")
+    if a.reingerir:
+        print("(--reingerir: se vuelven a bajar tambien las sesiones ya guardadas)")
     if nombre == config.STRAVA:
         print(f"(pausa de {PAUSA_S}s entre requests para no vaciar la cuota)")
         print("(Strava no expone GCT, oscilacion ni ratio vertical: quedan nulos)")
@@ -89,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     ingesta = None
     try:
         ingesta = _ingesta(nombre, repo)
-        resumen = ingesta.sincronizar(desde, hasta)
+        resumen = ingesta.sincronizar(desde, hasta, forzar=a.reingerir)
     except Exception as exc:
         # Un fallo de la fuente (o una credencial que falta) es un error de
         # operacion, no un traceback: aca no hay respaldo al que caer, porque
