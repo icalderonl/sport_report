@@ -329,7 +329,7 @@ En un intérprete más viejo `pip` descarta en silencio las versiones que piden
 la Pi usa 1.x. Los tests pasan igual y estarías probando contra un major que
 en producción no existe. La CI corre en 3.11 y 3.12 justamente por esto.
 
-671 tests, ninguno toca la red: intervals.icu, Strava, Telegram y Claude se
+672 tests, ninguno toca la red: intervals.icu, Strava, Telegram y Claude se
 prueban con dobles (`httpx.MockTransport` para los clientes HTTP).
 `tests/test_regresiones.py` fija los bugs ya corregidos: cada test de ahí falla
 si se revierte su arreglo.

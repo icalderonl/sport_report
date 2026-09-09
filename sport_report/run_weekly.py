@@ -130,6 +130,9 @@ def ejecutar(
     """Corre el pipeline completo. No lanza salvo un fallo del motor de calculo."""
     plan_store = plan_store or PlanStore()
     problemas: list[str] = []
+    # Problemas que el reporte ya explica con sus propias palabras: cuentan para
+    # el estado `parcial` y para el log, pero no se repiten en el mensaje.
+    solo_bitacora: set[str] = set()
 
     # 1. Ingesta -----------------------------------------------------------
     # `ingesta` inyectada = una fuente concreta (tests, o --fuente forzada ya
@@ -159,18 +162,30 @@ def ejecutar(
             # Que la semana salga por el respaldo no es un fallo silencioso: es
             # una semana incompleta y la corrida queda `parcial` para que quede
             # en la bitacora, ademas del aviso dentro del reporte.
-            problemas.append(
+            #
+            # Pero el motivo va SOLO a la bitacora. `report.construir` ya pone
+            # en el reporte el aviso que le sirve al atleta ("los datos vienen
+            # del respaldo, no hay GCT ni bienestar, la semana no esta
+            # completa"), y repetirlo aqui le sumaba una segunda linea con el
+            # error crudo de la fuente dentro: en la primera prueba real el
+            # mensaje termino incluyendo "no la teclees en la Pi (ver
+            # deploy/runbook-intervals.md)", que es una instruccion para quien
+            # opera el sistema, no para quien entrena.
+            problema = (
                 f"los datos vienen de {resultado.fuente} (respaldo) porque "
                 f"{resultado.motivo}: sin GCT, oscilacion vertical, ratio "
                 "vertical ni bienestar"
             )
+            problemas.append(problema)
+            solo_bitacora.add(problema)
     else:
         log.info("ingesta omitida")
 
     # 2. Motor de calculo --------------------------------------------------
     datos = report.construir(rango, repo, plan_store)
-    if problemas:
-        datos["avisos_datos"] = list(datos["avisos_datos"]) + problemas
+    para_el_mensaje = [p for p in problemas if p not in solo_bitacora]
+    if para_el_mensaje:
+        datos["avisos_datos"] = list(datos["avisos_datos"]) + para_el_mensaje
 
     # 3. Narrativa ---------------------------------------------------------
     texto_narrativa = None

@@ -437,3 +437,45 @@ def test_una_narrativa_correcta_no_agrega_ese_aviso(entorno):
     ejecutar(SEMANA, repo, store, narrador=narrador_ok, enviador=buzon, guardar=False)
 
     assert "atribuye mal" not in buzon.mensajes[0]
+
+
+def test_el_respaldo_se_avisa_una_sola_vez_y_sin_letra_de_operador(entorno):
+    """Visto en la prueba real del 2026-09-09.
+
+    El mensaje traia dos lineas diciendo lo mismo, y la segunda incrustaba el
+    error crudo de la fuente: "falta INTERVALS_API_KEY en el .env... no la
+    teclees en la Pi (ver deploy/runbook-intervals.md)". Eso es una instruccion
+    para quien opera el sistema, no para quien entrena. El motivo completo sigue
+    yendo a la bitacora, que es donde sirve.
+    """
+    repo, store = entorno
+    motivo = (
+        "falta INTERVALS_API_KEY en el .env. Se saca de intervals.icu -> "
+        "Settings -> Developer Settings, y se copia por scp: no la teclees en "
+        "la Pi (ver deploy/runbook-intervals.md)"
+    )
+    repo.guardar_fuente_semana(SEMANA.clave, "strava", True, f"intervals: {motivo}")
+    buzon = Buzon()
+
+    def seleccionar():
+        return fuentes.ResultadoFuente(
+            fuente="strava",
+            resumen=ResumenIngesta(actividades=3, corridas=3, zonas_origen="strava"),
+            fallback=True,
+            intentos=(("intervals", motivo),),
+        )
+
+    r = ejecutar(
+        SEMANA, repo, store, seleccionar=seleccionar, narrador=None,
+        enviador=buzon, guardar=False,
+    )
+
+    mensaje = buzon.mensajes[0]
+    avisos = [a for a in r.datos["avisos_datos"] if "respaldo" in a]
+    assert len(avisos) == 1, avisos
+    assert "runbook" not in mensaje and "INTERVALS_API_KEY" not in mensaje
+    # Lo que el atleta si necesita saber sigue estando.
+    assert "respaldo" in mensaje and "no esta completa" in mensaje
+    # Y el motivo entero queda en la bitacora y en el estado de la corrida.
+    assert r.estado == PARCIAL
+    assert any("INTERVALS_API_KEY" in p for p in r.problemas)
