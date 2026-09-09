@@ -17,24 +17,50 @@ from .config import LOG_DIR
 # que dicen si intervals.icu respondio y con que rango de fechas, y son lo
 # primero que se mira cuando una corrida sale rara.
 _SECRETOS = (
-    re.compile(r"/bot(\d+:[A-Za-z0-9_-]+)"),
+    (re.compile(r"/bot(\d+:[A-Za-z0-9_-]+)"), "/bot<TOKEN>"),
     # Por si alguna vez una clave viaja en query string (intervals.icu usa
     # Basic Auth, pero el respaldo de Strava sirve tokens por parametro).
-    re.compile(r"((?:access_token|refresh_token|api_key|key)=)[^&\s]+", re.I),
+    (
+        re.compile(r"((?:access_token|refresh_token|api_key|key)=)[^&\s]+", re.I),
+        r"\1<REDACTADO>",
+    ),
 )
 
 
+def _redactar(texto: str) -> str:
+    for patron, reemplazo in _SECRETOS:
+        texto = patron.sub(reemplazo, texto)
+    return texto
+
+
 class _SinSecretos(logging.Filter):
-    """Tapa credenciales en cualquier registro, venga de donde venga."""
+    """Tapa credenciales en cualquier registro, venga de donde venga.
+
+    Se engancha a los HANDLERS y no a un logger: un filtro puesto en un logger
+    solo mira lo que se registra a traves de el, no lo que le llega propagado
+    desde `httpx` u otra libreria. En el handler pasa todo lo que va a salir.
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
         texto = record.getMessage()
-        limpio = _SECRETOS[0].sub("/bot<TOKEN>", texto)
-        limpio = _SECRETOS[1].sub(r"\1<REDACTADO>", limpio)
+        limpio = _redactar(texto)
         if limpio != texto:
-            # Se reemplaza el mensaje ya formateado: los args ya se consumieron.
+            # Se guarda el mensaje ya interpolado, asi que los args sobran: si
+            # se dejaran, el formateador intentaria `msg % args` otra vez.
             record.msg = limpio
             record.args = ()
+
+        # El traceback NO va en `getMessage()`: lo anade el formateador despues,
+        # y httpx mete la URL entera en el texto de sus excepciones ("401 for
+        # url ..."), justo el caso en que uno esta mirando credenciales. El
+        # formateador cachea su render en `exc_text`, asi que rellenarlo aqui ya
+        # redactado hace que los handlers usen esta version y no la cruda.
+        if record.exc_info:
+            if record.exc_text is None:
+                record.exc_text = logging.Formatter().formatException(record.exc_info)
+            record.exc_text = _redactar(record.exc_text)
+        if record.stack_info:
+            record.stack_info = _redactar(record.stack_info)
         return True
 
 

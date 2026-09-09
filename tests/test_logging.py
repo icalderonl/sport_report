@@ -8,6 +8,7 @@ en logs/*.log, en la salida del cron y en cualquier pantallazo.
 from __future__ import annotations
 
 import logging
+import sys
 
 from sport_report.logging_setup import _SinSecretos
 
@@ -57,3 +58,38 @@ def test_los_args_no_se_reformatean_dos_veces():
     )
     _SinSecretos().filter(registro)
     assert registro.getMessage() == registro.getMessage()
+
+
+def test_el_token_dentro_de_un_traceback_tampoco_llega_al_log():
+    """El caso que se escapaba: el traceback no pasa por `getMessage()`.
+
+    httpx pone la URL completa en el texto de sus excepciones ("Client error
+    '401 Unauthorized' for url ..."), y un 401 de Telegram es exactamente el
+    momento en que alguien esta mirando el log de credenciales.
+    """
+    try:
+        raise RuntimeError(
+            "Client error '401 Unauthorized' for url "
+            f"'https://api.telegram.org/bot{TOKEN}/sendMessage'"
+        )
+    except RuntimeError:
+        registro = logging.LogRecord(
+            "sport_report.telegram", logging.ERROR, __file__, 1,
+            "no se pudo enviar", (), sys.exc_info(),
+        )
+
+    assert _SinSecretos().filter(registro) is True
+    salida = logging.Formatter("%(levelname)s %(message)s").format(registro)
+    assert TOKEN not in salida
+    assert "/bot<TOKEN>/sendMessage" in salida
+    # El resto del traceback tiene que seguir siendo util.
+    assert "401 Unauthorized" in salida and "Traceback" in salida
+
+
+def test_el_stack_info_tambien_se_redacta():
+    registro = logging.LogRecord(
+        "x", logging.ERROR, __file__, 1, "algo", (), None,
+        sinfo=f"enviando a /bot{TOKEN}/sendMessage",
+    )
+    _SinSecretos().filter(registro)
+    assert TOKEN not in registro.stack_info
