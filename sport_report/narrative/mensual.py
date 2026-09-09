@@ -61,7 +61,10 @@ Como leer el JSON:
   lo presentes como un cero.
 - "avisos_datos" describe huecos. Si hay alguno relevante, mencionalo.
 - Los valores de "umbrales" son de literatura general, no estan calibrados a
-  este atleta. No los presentes como verdad medica."""
+  este atleta. No los presentes como verdad medica.
+- Si te refieres a una semana en particular, usa la fecha tal como aparece en
+  "lunes" (ej. 2026-08-31), nunca la reescribas como DD/MM (31/08): un formato
+  distinto rompe la verificacion automatica de cifras."""
 
 SISTEMA_MENSUAL_ACTIVIDAD = f"""\
 Eres el redactor del PRIMER mensaje del reporte MENSUAL de entrenamiento de
