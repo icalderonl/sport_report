@@ -66,6 +66,9 @@ Como leer el JSON:
   la presentes como sesion no hecha.
 - Los valores de "umbrales" son de literatura general, no estan calibrados a este
   atleta. No los presentes como verdad medica.
+- El porcentaje de "volumen"."pct" NO es la adherencia. Uno compara kilometros
+  contra el plan y el otro cuenta sesiones cumplidas: pueden diferir mucho (120%
+  de volumen con 50% de adherencia es posible). Cita cada uno con su nombre.
 - Un bloque con "disponible": false NO tiene dato. Su "motivo" dice por que. No
   lo presentes como un cero ni te lo saltes en silencio si venia al caso.
 - Si "fuente"."fallback" es true, la semana se ingirio desde la fuente de
@@ -206,12 +209,25 @@ _RE_HUECO_MALO = re.compile(r"[\d\n.;]")
 # nombre ya esta dicho y la coma no lo separa de su cifra.
 _RE_HUECO_MALO_ADELANTE = re.compile(r"[\d\n.;),]")
 
+# Y por lo mismo corta una conjuncion, aunque no venga con coma. Frase real del
+# 2026-09-09, con el texto entero correcto:
+#
+#   "el HRV mejoro 7.0 ms a 58.4 ms y la frecuencia cardiaca de reposo bajo
+#    2.6 lpm a 53.4 lpm"
+#
+# 58.4 es el HRV. Su propio nombre queda descartado por el digito del delta
+# (7.0), y el hueco hacia adelante —" ms y la "— no tiene coma ni parentesis,
+# asi que la cifra se le colgaba a la HR de reposo. Una conjuncion abre una
+# clausula sobre OTRA metrica: lo que quedo detras pertenece a la anterior.
+_RE_CONJUNCION = re.compile(r"\b(y|e|ni|pero|mientras|aunque)\b", re.I)
+
 
 def _hueco_valido(hueco: str, hacia_adelante: bool = False) -> bool:
     if len(hueco) > _VENTANA:
         return False
-    malo = _RE_HUECO_MALO_ADELANTE if hacia_adelante else _RE_HUECO_MALO
-    return not malo.search(hueco)
+    if not hacia_adelante:
+        return not _RE_HUECO_MALO.search(hueco)
+    return not _RE_HUECO_MALO_ADELANTE.search(hueco) and not _RE_CONJUNCION.search(hueco)
 
 
 # (nombre legible, como aparece en el texto, rutas del JSON que puede citar)
@@ -360,7 +376,17 @@ METRICAS: tuple[tuple[str, re.Pattern[str], tuple[tuple[str, ...], ...]], ...] =
 
 
 def _valor_en(datos: Any, ruta: tuple[str, ...]) -> Any:
-    for clave in ruta:
+    """Camina la ruta. Si a mitad hay una lista, sigue por cada elemento.
+
+    Hace falta para las series del mensual: `("acwr", "por_semana", "valor")`
+    devuelve los cinco valores del mes. La serie completa VA en el prompt del
+    mensual, asi que citar el minimo de un rango es legitimo y no puede
+    reportarse como una cifra mal atribuida.
+    """
+    for i, clave in enumerate(ruta):
+        if isinstance(datos, list):
+            resto = ruta[i:]
+            return [v for d in datos for v in [_valor_en(d, resto)] if v is not None]
         if not isinstance(datos, dict) or clave not in datos:
             return None
         datos = datos[clave]
@@ -378,12 +404,13 @@ def _valores_legitimos(datos: dict[str, Any], rutas: tuple[tuple[str, ...], ...]
     """
     salida: set[str] = set()
     for ruta in rutas:
-        valor = _valor_en(datos, ruta)
-        if valor is None or isinstance(valor, bool) or not isinstance(valor, (int, float)):
-            continue
-        for forma in (float(valor), abs(float(valor))):
-            salida.add(_norm(forma))
-            salida.add(_norm(round(forma, 1)))
+        crudo = _valor_en(datos, ruta)
+        for valor in crudo if isinstance(crudo, list) else [crudo]:
+            if valor is None or isinstance(valor, bool) or not isinstance(valor, (int, float)):
+                continue
+            for forma in (float(valor), abs(float(valor))):
+                salida.add(_norm(forma))
+                salida.add(_norm(round(forma, 1)))
     return salida
 
 

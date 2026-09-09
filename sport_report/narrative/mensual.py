@@ -97,20 +97,33 @@ INSTRUCCION_MENSUAL = (
 #: extienden aca en vez de tocar la tabla semanal: son otras rutas para los
 #: mismos nombres de metrica.
 METRICAS_MENSUALES: tuple[tuple[str, re.Pattern[str], tuple[tuple[str, ...], ...]], ...] = (
+    # Cada metrica con serie declara tambien su `por_semana`. A diferencia del
+    # semanal, aca la serie entera VA en el prompt y el modelo la cita: en la
+    # primera prueba real escribio "el ACWR se movio entre 0.91 y 1.29", con
+    # 0.91 tomado del minimo de las cinco semanas. Sin la ruta de la serie eso
+    # se reportaba como cifra mal atribuida siendo correcto, y ese aviso sube al
+    # reporte del atleta.
     (
         "ACWR",
         re.compile(r"ACWR|ratio agudo[- :/]*cronico", re.I),
         (
             ("acwr", "promedio"),
             ("acwr", "maximo"),
+            ("acwr", "por_semana", "valor"),
             ("umbrales", "acwr_alto"),
             ("umbrales", "acwr_bajo"),
         ),
     ),
     (
         "Monotony",
-        re.compile(r"monoton[iy]a?", re.I),
-        (("monotony", "promedio"), ("monotony", "maximo"), ("umbrales", "monotony_alta")),
+        # Con acento, igual que en el semanal: el modelo escribe "monotonia".
+        re.compile(r"monoton[iíy]a?", re.I),
+        (
+            ("monotony", "promedio"),
+            ("monotony", "maximo"),
+            ("monotony", "por_semana", "valor"),
+            ("umbrales", "monotony_alta"),
+        ),
     ),
     (
         "volumen",
@@ -122,7 +135,13 @@ METRICAS_MENSUALES: tuple[tuple[str, re.Pattern[str], tuple[tuple[str, ...], ...
             ("volumen", "mes_anterior_km"),
             ("volumen", "delta_km"),
             ("volumen", "semanas_al_alza"),
+            ("volumen", "por_semana", "km"),
         ),
+    ),
+    (
+        "carga",
+        re.compile(r"carga", re.I),
+        (("carga", "total"), ("carga", "corridas"), ("carga", "por_semana", "carga")),
     ),
     (
         "adherencia",
@@ -131,6 +150,7 @@ METRICAS_MENSUALES: tuple[tuple[str, re.Pattern[str], tuple[tuple[str, ...], ...
             ("adherencia", "promedio_pct"),
             ("adherencia", "semanas_con_plan"),
             ("adherencia", "semanas_sin_plan"),
+            ("adherencia", "por_semana", "pct"),
         ),
     ),
     (

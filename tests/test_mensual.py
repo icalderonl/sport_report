@@ -605,3 +605,38 @@ def test_un_rechazo_del_modelo_no_es_un_texto_vacio():
     cliente = ClienteFalso(Respuesta("", stop_reason="refusal"))
     n = redactar_mensual(MENSUAL_JSON, cliente=cliente)
     assert n.ok is False and "rechazo" in n.error
+
+
+
+def test_el_modelo_puede_citar_el_rango_de_una_serie_semanal():
+    """"El ACWR se movio entre 0.91 y 1.29 a lo largo del mes, con promedio 1.1"
+
+    Frase real del 2026-09-09. La serie semanal entera va en el prompt mensual
+    —es el contenido del reporte—, asi que citar el minimo de las cinco semanas
+    es legitimo. Antes se reportaba como cifra mal atribuida, y ese aviso sube
+    al reporte del atleta.
+    """
+    datos = {
+        "acwr": {
+            "promedio": 1.1,
+            "maximo": 1.29,
+            "por_semana": [
+                {"lunes": "2026-08-03", "valor": 0.91, "confiable": True},
+                {"lunes": "2026-08-10", "valor": 1.29, "confiable": True},
+                {"lunes": "2026-08-17", "valor": None, "confiable": False},
+            ],
+        },
+        "umbrales": {"acwr_alto": 1.5},
+    }
+    texto = "El ACWR se movio entre 0.91 y 1.29 a lo largo del mes, con promedio de 1.1."
+    assert verificar_atribucion(texto, datos, METRICAS_MENSUALES) == []
+
+    # Y una cifra que no esta ni en la serie ni en los agregados sigue saliendo.
+    assert verificar_atribucion("El ACWR promedio fue 2.4.", datos, METRICAS_MENSUALES)
+
+
+def test_una_serie_con_huecos_no_rompe_la_atribucion():
+    """`valor: None` en una semana sin dato confiable es lo normal en el mensual."""
+    datos = {"monotony": {"promedio": None, "maximo": None,
+                          "por_semana": [{"lunes": "2026-08-03", "valor": None}]}}
+    assert verificar_atribucion("La monotonia fue 0.9.", datos, METRICAS_MENSUALES)

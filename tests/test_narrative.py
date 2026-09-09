@@ -572,3 +572,24 @@ def test_ground_contact_time_se_reconoce_como_gct():
     # 8.4 es la oscilacion vertical, no el GCT.
     assert verificar_atribucion("El ground contact time fue 8.4 ms.", COMPLETO)
     assert verificar_atribucion("El ground contact time fue 232.0 ms.", COMPLETO) == []
+
+
+
+def test_la_conjuncion_no_le_cuelga_la_cifra_a_la_metrica_siguiente():
+    """"...el HRV mejoro 7.0 ms a 62.0 ms y la frecuencia cardiaca de reposo..."
+
+    Frase real del 2026-09-09, correcta de punta a punta. 62.0 es el HRV; su
+    nombre queda descartado por el digito del delta y el hueco hacia adelante
+    no trae coma ni parentesis, solo " ms y la ".
+    """
+    texto = (
+        "En bienestar, el HRV mejoro 8.0 ms a 62.0 ms y la frecuencia cardiaca "
+        "de reposo bajo 2.0 lpm a 50.0 lpm, indicadores de mejor recuperacion."
+    )
+    assert verificar_atribucion(texto, COMPLETO) == []
+
+
+def test_la_conjuncion_no_tapa_una_confusion_de_verdad():
+    """La regla nueva no puede volver ciega la comprobacion."""
+    # 7.8 es la deriva maxima, no el Monotony.
+    assert verificar_atribucion("subio y la monotonia fue 7.8", COMPLETO)
