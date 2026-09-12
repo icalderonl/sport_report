@@ -15,6 +15,8 @@ BotFather, elige tu bot y pega:
 
 ```
 setplan - Carga el plan de la semana
+corregir - Arregla un dia sin reenviar la semana entera
+carrera - Declara o consulta la carrera objetivo
 plan - Muestra el plan vigente y el estado de fuerza
 fuerza - Marca una sesion de fuerza como cumplida
 progreso - Como va la semana en curso
