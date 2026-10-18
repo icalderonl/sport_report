@@ -16,19 +16,31 @@ Necesitas las credenciales de los otros runbooks:
 La Pi necesita **Python 3.11+**. Raspberry Pi OS bookworm trae 3.11; si estás en
 bullseye (3.9), actualiza el sistema o el SDK de Anthropic no va a instalar.
 
+En los comandos, `TU_USUARIO@LA_IP_DE_LA_PI` es tu usuario de la Pi y su IP
+(`hostname -I` en la consola de la Pi; la asigna DHCP y puede cambiar). Conviene
+autorizar la clave del PC una vez, para que `ssh`/`scp` no pidan contraseña:
+
+```powershell
+# PowerShell en el PC; ssh-keygen solo si aun no tienes una clave
+ssh-keygen -t ed25519
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh TU_USUARIO@LA_IP_DE_LA_PI "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+```
+
 ## 1. Copiar el código
 
-Desde el PC:
+Desde el PC, solo los archivos versionados. **No uses `scp -r .`**: copiaría el
+`data/`, los `logs/`, los `respaldos/` y el `.env` del PC.
 
 ```bash
-scp -r . pi@raspberrypi.local:/tmp/sport_report
+git archive --format=tar -o sr.tar HEAD
+scp sr.tar TU_USUARIO@LA_IP_DE_LA_PI:/tmp/
 ```
 
 En la Pi:
 
 ```bash
 sudo mkdir -p /opt/sport_report
-sudo cp -r /tmp/sport_report/. /opt/sport_report/
+sudo tar -xf /tmp/sr.tar --no-same-owner -C /opt/sport_report
 ```
 
 ## 2. Instalar
@@ -55,7 +67,7 @@ una clave con un carácter perdido da un 401 que parece un problema de la API.
 Escribe el `.env` en el PC y cópialo:
 
 ```bash
-scp .env pi@raspberrypi.local:/tmp/env
+scp .env TU_USUARIO@LA_IP_DE_LA_PI:/tmp/env
 sudo install -o sportreport -g sportreport -m 600 /tmp/env /opt/sport_report/.env
 ```
 
@@ -86,7 +98,7 @@ Si la Pi no tiene navegador (lo normal), corre `autorizar` **en el PC** y copia
 el `data/tokens.json` resultante:
 
 ```bash
-scp data/tokens.json pi@raspberrypi.local:/tmp/
+scp data/tokens.json TU_USUARIO@LA_IP_DE_LA_PI:/tmp/
 sudo install -o sportreport -g sportreport -m 600 /tmp/tokens.json /opt/sport_report/data/
 ```
 
@@ -222,8 +234,23 @@ queda con una mezcla de las dos versiones.
 
 ### Actualizar el código
 
+Desde el PC, en el checkout ya al día con `main`:
+
+```powershell
+git archive --format=tar -o sr.tar HEAD
+scp sr.tar deploy/actualizar.sh TU_USUARIO@LA_IP_DE_LA_PI:/tmp/
+ssh -t TU_USUARIO@LA_IP_DE_LA_PI "sudo bash /tmp/actualizar.sh /tmp/sr.tar"
+```
+
+`actualizar.sh` se niega a extraer un tar que traiga `data/`, `logs/`,
+`respaldos/` o `.env`. Para el bot, respalda `data/`, extrae el código, deja
+todo de `sportreport`, reinicia, muestra el log y corre `diagnostico`. No
+dispara el reporte semanal. El script se copia junto con el tar y no se usa el de
+`/opt/sport_report/deploy/`, porque ese todavía es la versión anterior.
+
+Si cambiaron las dependencias, después:
+
 ```bash
-sudo cp -r /tmp/sport_report/. /opt/sport_report/
 sudo bash /opt/sport_report/deploy/instalar.sh
 sudo systemctl restart sport-report-bot
 ```
