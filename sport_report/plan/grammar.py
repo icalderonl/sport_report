@@ -280,7 +280,9 @@ def _parse_dias(
         md = RE_LINEA_DIA.match(linea)
         if not md:
             if RE_SEMANA.match(linea):
-                errores.append(ErrorPlan(nro_linea, None, "`semana:` declarada mas de una vez"))
+                errores.append(
+                    ErrorPlan(nro_linea, None, "`semana:` va una sola vez y en la primera linea")
+                )
             elif "volumen" in linea.lower():
                 errores.append(
                     ErrorPlan(
@@ -366,20 +368,26 @@ def parse_plan(texto: str) -> PlanSemanal:
     errores: list[ErrorPlan] = []
 
     # --- cabecera ---
+    # `semana: <N>` es opcional. Sin ella el numero sale de la carrera
+    # principal (C-N), y eso lo resuelve quien conoce la semana a la que se
+    # ancla el plan, no la gramatica.
     nro_linea, primera = lineas[0]
     ms = RE_SEMANA.match(primera)
+    semana: int | None = None
     if ms:
         semana = int(ms.group(1))
         cuerpo = lineas[1:]
-    else:
+    elif primera.lower().startswith("semana"):
         errores.append(
             ErrorPlan(
                 nro_linea,
                 None,
-                f"se esperaba `semana: <N>` como primera linea, se encontro '{primera}'",
+                f"se esperaba `semana: <N>` (o ninguna linea de semana), se encontro "
+                f"'{primera}'",
             )
         )
-        semana = 0
+        cuerpo = lineas[1:]
+    else:
         cuerpo = lineas
 
     # --- dias ---

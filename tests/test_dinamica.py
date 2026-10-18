@@ -176,7 +176,7 @@ def test_una_metrica_puede_faltar_sin_arrastrar_a_las_otras(entorno):
 
 
 def test_el_reporte_declara_la_version_2(entorno):
-    assert _json(entorno)["version"] == 2
+    assert _json(entorno)["version"] >= 2  # v2 trajo estos bloques
 
 
 def test_el_mensaje_muestra_la_dinamica(entorno):

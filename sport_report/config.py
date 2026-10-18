@@ -172,6 +172,15 @@ ANTHROPIC_MODEL_MENSUAL = os.getenv("ANTHROPIC_MODEL_MENSUAL", "claude-sonnet-5"
 
 TIPOS_RUN = ("Run", "TrailRun", "VirtualRun")
 TIPOS_FUERZA = ("WeightTraining", "Workout", "Crossfit")
+# Solo para el resumen por deporte de una semana sin plan: el ciclismo no entra
+# a ningun volumen ni carga de running.
+TIPOS_CICLISMO = (
+    "Ride", "VirtualRide", "GravelRide", "MountainBikeRide", "EBikeRide",
+    "EMountainBikeRide", "Velomobile",
+)
+# Variantes bajo techo, que el resumen detalla aparte. Una cinta o un rodillo
+# que la fuente registre como `Run`/`Ride` normales no se distingue.
+TIPOS_INDOOR = ("VirtualRun", "VirtualRide")
 
 # Origenes de zonas de HR que se consideran datos del atleta. Cualquier otro
 # (hoy solo 'fallback') implica carga ponderada con peso plano, que el reporte

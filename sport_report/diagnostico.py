@@ -173,7 +173,7 @@ def main() -> int:
         linea(
             OK,
             "plan vigente",
-            f"semana {p.semana} para {vigente.rango} ({p.volumen_planificado_km():g} km)",
+            f"semana {p.etiqueta_semana() or 'sin numero'} para {vigente.rango} ({p.volumen_planificado_km():g} km)",
         )
         pendientes = [d for d in p.dias_fuerza() if not p.fuerza_completada.get(d)]
         if pendientes:

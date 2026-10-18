@@ -136,18 +136,58 @@ def test_sin_archivo_no_hay_carrera(store):
     assert store.cargar() is None
 
 
-def test_declarar_otra_carrera_reemplaza_la_anterior(store):
-    store.guardar(Carrera(fecha=CARRERA_FECHA))
+def test_declarar_otra_carrera_se_suma_y_no_quita_la_principal(store):
+    store.guardar(Carrera(fecha=CARRERA_FECHA, nombre="Maraton"))
+    store.guardar(Carrera(fecha=date(2026, 10, 18), nombre="10K"))
+    assert [c.nombre for c in store.listar()] == ["10K", "Maraton"], "ordenadas por fecha"
+    assert store.cargar().nombre == "Maraton", "la primera declarada sigue de principal"
+
+
+def test_la_misma_fecha_actualiza_el_nombre_en_vez_de_duplicar(store):
+    store.guardar(Carrera(fecha=CARRERA_FECHA, nombre="Maraton"))
+    store.guardar(Carrera(fecha=CARRERA_FECHA, nombre="Maraton de Santiago"))
+    assert [c.nombre for c in store.listar()] == ["Maraton de Santiago"]
+    assert store.cargar().nombre == "Maraton de Santiago"
+
+
+def test_marcar_otra_como_principal(store):
+    store.guardar(Carrera(fecha=CARRERA_FECHA, nombre="Maraton"))
     store.guardar(Carrera(fecha=date(2026, 12, 6), nombre="Otra"))
-    c = store.cargar()
-    assert (c.fecha, c.nombre) == (date(2026, 12, 6), "Otra")
+    store.marcar_principal(date(2026, 12, 6))
+    assert store.cargar().nombre == "Otra"
+    with pytest.raises(CarreraInvalida):
+        store.marcar_principal(date(2027, 1, 1))
+
+
+def test_borrar_la_principal_no_promueve_otra(store):
+    """Promover sola a otra cambiaria la fase del ciclo sin que nadie lo decida."""
+    store.guardar(Carrera(fecha=CARRERA_FECHA, nombre="Maraton"))
+    store.guardar(Carrera(fecha=date(2026, 12, 6), nombre="Otra"))
+    borrada, era_principal = store.borrar(CARRERA_FECHA)
+    assert borrada.nombre == "Maraton" and era_principal
+    assert store.cargar() is None
+    assert [c.nombre for c in store.listar()] == ["Otra"]
 
 
 def test_borrar_quita_el_archivo(store):
     store.guardar(Carrera(fecha=CARRERA_FECHA))
-    assert store.borrar() is True
+    assert store.borrar()[0] is not None
     assert store.cargar() is None
-    assert store.borrar() is False, "borrar dos veces no puede fallar"
+    assert not store.ruta.exists()
+    assert store.borrar() == (None, False), "borrar dos veces no puede fallar"
+
+
+def test_un_archivo_v1_se_lee_como_principal(store):
+    store.ruta.parent.mkdir(parents=True, exist_ok=True)
+    store.ruta.write_text(
+        json.dumps({"version": 1, "fecha": "2026-11-15", "nombre": "Maraton"}),
+        encoding="utf-8",
+    )
+    assert store.cargar().nombre == "Maraton"
+    store.guardar(Carrera(fecha=date(2026, 12, 6), nombre="Otra"))
+    d = json.loads(store.ruta.read_text(encoding="utf-8"))
+    assert d["version"] == 2 and d["principal"] == "2026-11-15"
+    assert len(d["carreras"]) == 2
 
 
 def test_un_archivo_ilegible_se_trata_como_sin_carrera(store):
@@ -163,13 +203,80 @@ def test_un_formato_futuro_no_se_interpreta_a_la_fuerza(store):
 
 
 # --------------------------------------------------------------------------
+# La semana del plan contada hacia la carrera principal (C-N)
+# --------------------------------------------------------------------------
+
+PLAN_SIN_SEMANA = PLAN_SPEC.replace("semana: 5\n", "")
+
+
+def test_sin_semana_el_plan_se_numera_hacia_la_principal(store, tmp_path):
+    from sport_report.fechas import hoy_local
+
+    ps = PlanStore(actual=tmp_path / "p2.json", archivo=tmp_path / "planes2")
+    # Relativa a hoy: /setplan ancla a la semana en curso real.
+    fecha = hoy_local() + timedelta(days=60)
+    store.guardar(Carrera(fecha=fecha, nombre="Maraton"))
+    r = comandos.cmd_setplan(ps, "/setplan\n" + PLAN_SIN_SEMANA, store)
+    restantes = Carrera(fecha=fecha).semanas_restantes(semana_de(hoy_local()).inicio)
+    assert restantes > 0
+    assert f"Semana Maraton - {restantes}" in r
+    plan = ps.cargar().plan
+    assert plan.semana is None and plan.semana_carrera == restantes
+    assert plan.etiqueta_semana() == f"Maraton - {restantes}"
+
+
+def test_una_carrera_sin_nombre_se_etiqueta_c_n(store, tmp_path):
+    from sport_report.fechas import hoy_local
+
+    ps = PlanStore(actual=tmp_path / "p2.json", archivo=tmp_path / "planes2")
+    store.guardar(Carrera(fecha=hoy_local() + timedelta(days=60)))
+    comandos.cmd_setplan(ps, "/setplan\n" + PLAN_SIN_SEMANA, store)
+    assert ps.cargar().plan.etiqueta_semana().startswith("C-")
+
+
+def test_la_semana_tecleada_manda_sobre_la_cuenta_regresiva(store, tmp_path):
+    ps = PlanStore(actual=tmp_path / "p2.json", archivo=tmp_path / "planes2")
+    store.guardar(Carrera(fecha=CARRERA_FECHA))
+    comandos.cmd_setplan(ps, "/setplan\n" + PLAN_SPEC, store)
+    plan = ps.cargar().plan
+    assert plan.semana == 5 and plan.semana_carrera is None
+    assert plan.etiqueta_semana() == "5"
+
+
+def test_sin_principal_el_plan_se_acepta_sin_numero(store, tmp_path):
+    ps = PlanStore(actual=tmp_path / "p2.json", archivo=tmp_path / "planes2")
+    r = comandos.cmd_setplan(ps, "/setplan\n" + PLAN_SIN_SEMANA, store)
+    assert "Plan cargado" in r and "no hay carrera principal" in r
+    assert ps.cargar().plan.etiqueta_semana() is None
+
+
+def test_la_cuenta_regresiva_se_mide_desde_la_semana_anclada():
+    """`/setplan proxima` el domingo ancla una semana mas cerca de la carrera."""
+    from sport_report.fechas import semana_siguiente
+
+    c = Carrera(fecha=CARRERA_FECHA)
+    assert c.semanas_restantes(semana_siguiente(SEMANA).inicio) == (
+        c.semanas_restantes(SEMANA.inicio) - 1
+    )
+
+
+def test_la_cuenta_regresiva_sobrevive_al_guardar_y_leer():
+    from sport_report.plan.models import plan_desde_json
+    from dataclasses import replace
+
+    p = replace(parse_plan(PLAN_SIN_SEMANA), semana_carrera=3, carrera_nombre="Fedachi")
+    q = plan_desde_json(p.to_json())
+    assert (q.semana, q.semana_carrera, q.etiqueta_semana()) == (None, 3, "Fedachi - 3")
+
+
+# --------------------------------------------------------------------------
 # El comando /carrera
 # --------------------------------------------------------------------------
 
 
 def test_declarar_una_carrera_responde_con_la_fase(store):
     r = comandos.cmd_carrera(store, "2026-11-15 Maraton de Santiago", hoy=LUNES)
-    assert "Carrera declarada" in r
+    assert "agregada como principal" in r
     assert "2026-11-15" in r and "Maraton de Santiago" in r
     assert "9 semana" in r
     assert store.cargar().nombre == "Maraton de Santiago"
@@ -196,6 +303,43 @@ def test_borrar_por_comando(store):
     assert "borrada" in comandos.cmd_carrera(store, "borrar", hoy=LUNES)
     assert store.cargar() is None
     assert "No habia" in comandos.cmd_carrera(store, "borrar", hoy=LUNES)
+
+
+def test_varias_carreras_por_comando(store):
+    comandos.cmd_carrera(store, "2026-11-15 Maraton", hoy=LUNES)
+    r = comandos.cmd_carrera(store, "2026-10-18 10K", hoy=LUNES)
+    assert "no es la principal" in r
+    lista = comandos.cmd_carrera(store, "", hoy=LUNES)
+    assert lista.index("1. 2026-10-18") < lista.index("2. 2026-11-15")
+    assert "Maraton [principal]" in lista and "10K [principal]" not in lista
+
+    r = comandos.cmd_carrera(store, "principal 1", hoy=LUNES)
+    assert "10K [principal]" in r
+    assert store.cargar().nombre == "10K"
+
+
+def test_borrar_con_varias_pide_cual(store):
+    comandos.cmd_carrera(store, "2026-11-15 Maraton", hoy=LUNES)
+    comandos.cmd_carrera(store, "2026-10-18 10K", hoy=LUNES)
+    r = comandos.cmd_carrera(store, "borrar", hoy=LUNES)
+    assert "indica cual" in r
+    assert len(store.listar()) == 2, "no se borra nada sin saber cual"
+
+
+def test_borrar_la_principal_por_comando_pide_elegir_otra(store):
+    comandos.cmd_carrera(store, "2026-11-15 Maraton", hoy=LUNES)
+    comandos.cmd_carrera(store, "2026-10-18 10K", hoy=LUNES)
+    r = comandos.cmd_carrera(store, "borrar 2026-11-15", hoy=LUNES)
+    assert "Era la principal" in r and "/carrera principal" in r
+    assert store.cargar() is None
+    assert "Ninguna es la principal" in comandos.cmd_carrera(store, "", hoy=LUNES)
+
+
+def test_principal_con_numero_fuera_de_rango(store):
+    comandos.cmd_carrera(store, "2026-11-15 Maraton", hoy=LUNES)
+    r = comandos.cmd_carrera(store, "principal 5", hoy=LUNES)
+    assert "no hay carrera 5" in r.lower()
+    assert store.cargar().nombre == "Maraton"
 
 
 def test_una_fecha_invalida_no_borra_la_carrera_guardada(store):

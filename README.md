@@ -16,7 +16,8 @@ tempo/series/fartlek, siempre) y **fatiga y dinámica** (solo si hubo una
 variación relevante contra el mes anterior).
 
 Fuente de datos: **intervals.icu**, con **Strava como respaldo** si esa falla.
-El plan se carga a mano por Telegram.
+El plan se carga a mano por Telegram. Una semana sin plan se reporta igual:
+un resumen por deporte (km de running, minutos de ciclismo, sesiones de fuerza).
 
 ## Cómo funciona
 
@@ -25,7 +26,7 @@ Telegram (bot)  <-- /setplan /corregir /plan /carrera /fuerza /progreso /volumen
       |
       v
 data/plan_actual.json  (anclado a un lunes-domingo concreto)
-data/carrera.json      (la carrera objetivo, que dura meses)
+data/carrera.json      (las carreras objetivo y cual es la principal)
       |
       v
 [timer lunes 07:00] -> intervals.icu ---> SQLite -> Motor de cálculo
@@ -71,7 +72,7 @@ y su ausencia no impide que el reporte llegue.
 |---|---|
 | `/setplan` | Carga el plan de la semana |
 | `/corregir <dia>: ...` | Reemplaza las sesiones de un día sin reenviar la semana |
-| `/carrera <fecha> [nombre]` | Declara la carrera objetivo (`/carrera borrar` la quita) |
+| `/carrera <fecha> [nombre]` | Agrega una carrera objetivo; `/carrera` las lista, `/carrera principal <n>` elige la principal y `/carrera borrar <n>` quita una |
 | `/plan` | Plan vigente y estado de fuerza |
 | `/fuerza <dia>` | Marca una sesión de fuerza como cumplida (`anterior`/`proxima` para otra semana) |
 | `/progreso` | Resumen corto: km de los programados y qué entrenamientos quedan |
@@ -104,7 +105,6 @@ para no consultar ninguna, `--sin-narrativa` para no llamar a Claude,
 
 ```
 /setplan
-semana: 5
 L: rest
 M: easy 8km Z2
 W: fuerza
@@ -113,6 +113,14 @@ V: prog 10km estructura=3km@6:00+3km@5:30+4km@5:00
 S: rest
 D: long 16km @6:15/5:45 Z2
 ```
+
+La línea `semana: <N>` es **opcional**. Sin ella, el plan se numera como
+**`<carrera> - N`** (por ejemplo `Fedachi - 5`): semanas que faltan, desde la
+semana a la que se ancla el plan, hasta la carrera principal (`- 0` es la semana
+de la carrera; si la carrera no tiene nombre queda `C-N`). Si la escribes, manda lo que
+escribiste. Sin carrera principal, o con la principal ya pasada, el plan se
+acepta sin número y la respuesta lo dice. El número se fija **al cargar**: cambiar
+después la principal no renumera los planes archivados.
 
 Los 7 días son obligatorios, con **al menos una línea cada uno**. Un día puede
 tener varias: `J: series 8.6km ...` y `J: fuerza` el mismo jueves es normal. Lo
@@ -210,10 +218,27 @@ faltante**, nunca como incumplimiento. La fuerza de un día doble va en su propi
 bloque para no mezclar un check binario con un porcentaje de kilómetros, y el
 porcentaje global cuenta corridas planificadas en vez de días.
 
-**La carrera objetivo vive fuera del plan.** `data/carrera.json`, no dentro de
+**Las carreras objetivo viven fuera del plan.** `data/carrera.json`, no dentro de
 `plan_actual.json`: su vida útil son meses y `/setplan` reemplaza el plan cada
-semana. Se usa como contexto en la narrativa y sobre todo en el mensual (semanas
-restantes, fase del ciclo).
+semana. Puede haber varias, pero **una sola es la principal**: la primera que se
+declara, o la que se elija con `/carrera principal`. Solo la principal define la
+fase del ciclo (en el mensual) y la numeración `<carrera> - N` del plan; las demás quedan
+anotadas sin mover ninguna cifra. Si se borra la principal **no se promueve otra
+sola**: la fase cambiaría sin que el atleta lo haya decidido, así que el bot pide
+elegirla. Un archivo del formato anterior (una sola carrera) se lee como esa
+carrera principal y se reescribe en v2 la primera vez que se modifica.
+
+**Una semana sin plan se resume por deporte.** El bloque `actividad_sin_plan` del
+JSON (solo existe sin plan) da km y minutos de running —con cuántas sesiones
+fueron en cinta—, minutos de ciclismo —con cuántas indoor—, sesiones de fuerza y
+minutos de cualquier otro deporte. Cada uno en su unidad y **sin sumarlos**: un
+km en bici no equivale a uno corriendo y la fuerza no tiene km. La frase del
+mensaje («hiciste 32.5 km de running, 95 min de ciclismo y 2 sesiones de
+fuerza») es una plantilla de Python con esas cifras, no del modelo. Nada de esto
+entra al volumen, la carga ni la adherencia, que siguen siendo solo de carrera.
+Cinta y rodillo se distinguen por el tipo (`VirtualRun`, `VirtualRide`): una
+sesión bajo techo que la fuente registre como `Run` o `Ride` cuenta como
+exterior.
 
 **Solo cuentan las actividades de carrera.** El volumen semanal, la adherencia
 diaria y el gráfico filtran por `config.TIPOS_RUN`: una salida en bici también
@@ -342,7 +367,7 @@ En un intérprete más viejo `pip` descarta en silencio las versiones que piden
 la Pi usa 1.x. Los tests pasan igual y estarías probando contra un major que
 en producción no existe. La CI corre en 3.11 y 3.12 justamente por esto.
 
-672 tests, ninguno toca la red: intervals.icu, Strava, Telegram y Claude se
+706 tests, ninguno toca la red: intervals.icu, Strava, Telegram y Claude se
 prueban con dobles (`httpx.MockTransport` para los clientes HTTP).
 `tests/test_regresiones.py` fija los bugs ya corregidos: cada test de ahí falla
 si se revierte su arreglo.

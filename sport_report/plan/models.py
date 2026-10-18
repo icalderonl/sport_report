@@ -215,13 +215,34 @@ class PlanSemanal:
     no hay descanso implicito, se declara con `rest`.
     """
 
-    semana: int
+    #: El numero que tecleo el atleta (`semana: 5`), o None si no lo puso.
+    semana: int | None
     sesiones: dict[str, tuple[Sesion, ...]]
     crudo: str = ""
     # Estado de cumplimiento de fuerza por dia; lo mutan la ingesta y /fuerza.
     # Es un bool por dia y no por sesion porque la gramatica admite como maximo
     # una fuerza diaria: mas de una no aportaria nada al seguimiento.
     fuerza_completada: dict[str, bool] = field(default_factory=dict)
+    #: Semanas hasta la carrera principal (C-N) cuando no se tecleo `semana:`.
+    #: Se fija al cargar el plan y NO se recalcula si despues cambia la
+    #: principal: un plan archivado dice lo que era cuando se escribio.
+    semana_carrera: int | None = None
+    #: Nombre de la carrera principal con que se conto `semana_carrera`, fijado
+    #: tambien al cargar. Vacio si la carrera no tenia nombre.
+    carrera_nombre: str = ""
+
+    def etiqueta_semana(self) -> str | None:
+        """'5', 'Fedachi - 3' (o 'C-3' si la carrera no tiene nombre), o None.
+
+        Lo tecleado manda sobre la cuenta regresiva.
+        """
+        if self.semana is not None:
+            return str(self.semana)
+        if self.semana_carrera is not None:
+            if self.carrera_nombre:
+                return f"{self.carrera_nombre} - {self.semana_carrera}"
+            return f"C-{self.semana_carrera}"
+        return None
 
     # -- accesores -------------------------------------------------------
 
@@ -301,6 +322,8 @@ class PlanSemanal:
     def to_json(self) -> dict[str, Any]:
         return {
             "semana": self.semana,
+            "semana_carrera": self.semana_carrera,
+            "carrera_nombre": self.carrera_nombre,
             "sesiones": {d: [s.to_json() for s in self.dia(d)] for d in ORDEN_DIAS},
             "fuerza_completada": {
                 d: self.fuerza_completada.get(d, False) for d in self.dias_fuerza()
@@ -372,7 +395,10 @@ def plan_desde_json(d: dict[str, Any]) -> PlanSemanal:
 
     try:
         sesiones = {k: _sesiones_del_dia(v) for k, v in d["sesiones"].items()}
-        semana = int(d["semana"])
+        semana = None if d.get("semana") is None else int(d["semana"])
+        semana_carrera = (
+            None if d.get("semana_carrera") is None else int(d["semana_carrera"])
+        )
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise PlanCorrupto(f"plan ilegible: {exc}") from exc
 
@@ -387,4 +413,6 @@ def plan_desde_json(d: dict[str, Any]) -> PlanSemanal:
         sesiones=sesiones,
         crudo=d.get("crudo", ""),
         fuerza_completada=dict(d.get("fuerza_completada", {})),
+        semana_carrera=semana_carrera,
+        carrera_nombre=str(d.get("carrera_nombre") or ""),
     )

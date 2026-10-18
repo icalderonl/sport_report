@@ -212,6 +212,61 @@ def _bloque_fatiga(f: dict | None) -> str:
     return "FATIGA Y DESCANSO\n" + "\n".join(filas) if filas else ""
 
 
+def _plural(n: int, singular: str, plural: str) -> str:
+    return f"{n} {singular if n == 1 else plural}"
+
+
+# Nombres legibles de los tipos que no son running, ciclismo ni fuerza. Un tipo
+# que no este aca se muestra tal como lo trae la fuente.
+_NOMBRE_DEPORTE = {
+    "Swim": "natacion", "Walk": "caminata", "Hike": "trekking",
+    "Rowing": "remo", "Yoga": "yoga", "Elliptical": "eliptica",
+}
+
+
+def frase_sin_plan(a: dict) -> str:
+    """'Hiciste 32.5 km de running, 95 min de ciclismo y 2 sesiones de fuerza.'
+
+    Plantilla de Python, no del modelo: las cifras salen tal cual del bloque
+    `actividad_sin_plan`. Solo nombra los deportes que tuvieron actividad.
+    """
+    partes: list[str] = []
+    r, c, f = a["running"], a["ciclismo"], a["fuerza"]
+    if r["sesiones"]:
+        partes.append(f"{_num(r['km'], ' km')} de running")
+    if c["sesiones"]:
+        partes.append(f"{c['minutos']:g} min de ciclismo")
+    if f["sesiones"]:
+        partes.append(_plural(f["sesiones"], "sesion de fuerza", "sesiones de fuerza"))
+    for o in a.get("otros", ()):
+        partes.append(f"{o['minutos']:g} min de {_NOMBRE_DEPORTE.get(o['tipo'], o['tipo'])}")
+    if not partes:
+        return "No hay actividad registrada esta semana."
+    if len(partes) == 1:
+        return f"Hiciste {partes[0]}."
+    return f"Hiciste {', '.join(partes[:-1])} y {partes[-1]}."
+
+
+def _bloque_sin_plan(a: dict) -> str:
+    L = ["ACTIVIDAD (sin plan cargado)", f"  {frase_sin_plan(a)}"]
+    r, c, f = a["running"], a["ciclismo"], a["fuerza"]
+    if r["sesiones"]:
+        det = f"  running: {_plural(r['sesiones'], 'sesion', 'sesiones')}, {r['minutos']:g} min"
+        if r["sesiones_indoor"]:
+            det += f" ({r['sesiones_indoor']} en cinta)"
+        L.append(det)
+    if c["sesiones"]:
+        det = f"  ciclismo: {_plural(c['sesiones'], 'sesion', 'sesiones')}"
+        if c["km"]:
+            det += f", {_num(c['km'], ' km')}"
+        if c["sesiones_indoor"]:
+            det += f" ({c['sesiones_indoor']} indoor)"
+        L.append(det)
+    if f["sesiones"] and f["minutos"]:
+        L.append(f"  fuerza: {f['minutos']:g} min")
+    return "\n".join(L)
+
+
 def formatear_reporte(datos: dict, narrativa: str | None = None) -> str:
     """Arma el mensaje de Telegram a partir del JSON del motor de calculo.
 
@@ -227,8 +282,10 @@ def formatear_reporte(datos: dict, narrativa: str | None = None) -> str:
         cabecera += (
             f"\nAl {_fecha_larga(s['hasta'])}: {s['dias_transcurridos']} de 7 dias"
         )
-    if s.get("numero_plan") is not None:
-        cabecera += f"\nPlan: semana {s['numero_plan']}"
+    # `etiqueta_plan` no existe en reportes archivados antes de C-N.
+    etiqueta = s.get("etiqueta_plan") or s.get("numero_plan")
+    if etiqueta is not None:
+        cabecera += f"\nPlan: semana {etiqueta}"
     L.append(cabecera)
 
     if narrativa:
@@ -236,12 +293,18 @@ def formatear_reporte(datos: dict, narrativa: str | None = None) -> str:
 
     vol = datos["volumen"]
     carga = datos["carga"]
+    sin_plan = datos.get("actividad_sin_plan")
     sufijo_plan = " planificados hasta hoy" if en_curso else " planificados"
-    v = [
-        "VOLUMEN",
-        f"  {_num(vol['real_km'], ' km')} reales / {_num(vol['planificado_km'], ' km')}"
-        f"{sufijo_plan} ({_num(vol['pct'], '%')})",
-    ]
+    if sin_plan:
+        # Sin plan no hay contra que comparar: "x km / 0 km (-)" no dice nada.
+        L.append(_bloque_sin_plan(sin_plan))
+        v = ["VOLUMEN", f"  {_num(vol['real_km'], ' km')} de running"]
+    else:
+        v = [
+            "VOLUMEN",
+            f"  {_num(vol['real_km'], ' km')} reales / {_num(vol['planificado_km'], ' km')}"
+            f"{sufijo_plan} ({_num(vol['pct'], '%')})",
+        ]
     if vol.get("estimado_km"):
         v.append(
             f"  ({_num(vol['estimado_km'], ' km')} del plan estimados de sesiones "
@@ -342,7 +405,9 @@ def formatear_progreso(datos: dict) -> str:
     ]
 
     if not adh["dias"]:
-        return "\n".join(L + ["", f"{_num(llevo, ' km')} corridos.", "No hay plan cargado para esta semana."])
+        sin_plan = datos.get("actividad_sin_plan")
+        resumen = frase_sin_plan(sin_plan) if sin_plan else f"{_num(llevo, ' km')} corridos."
+        return "\n".join(L + ["", resumen, "No hay plan cargado para esta semana."])
 
     pct = round(llevo / programado * 100) if programado else None
     linea = f"{_num(llevo, ' km')} de {_num(programado, ' km')} programados"

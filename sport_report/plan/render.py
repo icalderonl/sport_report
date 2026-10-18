@@ -56,7 +56,7 @@ def avisos(plan: PlanSemanal) -> list[str]:
 
 
 def resumen(plan: PlanSemanal, con_fuerza: bool = False) -> str:
-    lineas = [f"Semana {plan.semana}"]
+    lineas = [f"Semana {plan.etiqueta_semana() or 'sin numero'}"]
     for d in ORDEN_DIAS:
         # Una linea por sesion: con dos entrenamientos el mismo dia, juntarlos
         # en una sola linea escondia uno de los dos.

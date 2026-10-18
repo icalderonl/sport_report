@@ -69,7 +69,7 @@ def on_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
 
 @_handler
 def on_setplan(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
-    return comandos.cmd_setplan(_store, update.effective_message.text or "")
+    return comandos.cmd_setplan(_store, update.effective_message.text or "", _carrera)
 
 
 @_handler

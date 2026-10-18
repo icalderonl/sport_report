@@ -207,9 +207,21 @@ def test_solo_una_fuerza_por_dia():
     assert "una sesion de `fuerza` por dia" in errs[0].mensaje
 
 
-def test_sin_cabecera_semana():
-    errs = _errores(PLAN_SPEC.replace("semana: 5\n", ""))
-    assert "semana" in errs[0].mensaje
+def test_sin_cabecera_semana_se_acepta():
+    """`semana:` es opcional: sin ella el numero sale de la carrera principal."""
+    plan = parse_plan(PLAN_SPEC.replace("semana: 5\n", ""))
+    assert plan.semana is None
+
+
+def test_cabecera_semana_mal_escrita():
+    errs = _errores(PLAN_SPEC.replace("semana: 5", "semana cinco"))
+    assert "semana" in errs[0].mensaje and errs[0].dia is None
+
+
+def test_semana_fuera_de_la_primera_linea():
+    texto = PLAN_SPEC.replace("semana: 5\n", "") + "\nsemana: 5"
+    errs = _errores(texto)
+    assert "primera linea" in errs[0].mensaje
 
 
 def test_zona_invalida():

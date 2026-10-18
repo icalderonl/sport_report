@@ -27,9 +27,10 @@ from . import foster as m_foster
 log = logging.getLogger(__name__)
 
 # v2: agrega los bloques `fuente`, `gct`, `oscilacion_vertical`,
-# `ratio_vertical` y `fatiga_descanso`. Nadie bifurca sobre este numero; esta
+# `ratio_vertical` y `fatiga_descanso`. v3: `actividad_sin_plan` y la
+# etiqueta C-N del plan en `semana`. Nadie bifurca sobre este numero; esta
 # para poder mirar un reporte archivado y saber que esperaba traer.
-VERSION_REPORTE = 2
+VERSION_REPORTE = 3
 
 
 @dataclass(frozen=True)
@@ -155,6 +156,51 @@ def _decoupling(sesiones: list[SesionReal], umbrales: Umbrales) -> dict[str, Any
     }
 
 
+def _por_deporte(sesiones: list[SesionReal]) -> dict[str, Any]:
+    """Resumen de la semana por deporte, para cuando no hay plan cargado.
+
+    Cada deporte en su propia unidad: km para el running, minutos para el
+    ciclismo, sesiones para la fuerza. No se suman entre si —un km en bici no
+    equivale a uno corriendo y la fuerza no tiene km— ni se convierten a una
+    unidad comun, que seria una cifra derivada sin respaldo.
+    """
+    def minutos(lista: list[SesionReal]) -> int:
+        return round(sum(s.duracion_min or 0.0 for s in lista))
+
+    run = [s for s in sesiones if s.es_run]
+    bici = [s for s in sesiones if s.tipo in config.TIPOS_CICLISMO]
+    fuerza = [s for s in sesiones if s.es_fuerza and not s.es_run]
+    vistos = {id(s) for s in run + bici + fuerza}
+    otros: dict[str, list[SesionReal]] = {}
+    for s in sesiones:
+        if id(s) not in vistos:
+            otros.setdefault(s.tipo, []).append(s)
+
+    return {
+        "running": {
+            "km": round(sum(s.distancia_km or 0.0 for s in run), 1),
+            "minutos": minutos(run),
+            "sesiones": len(run),
+            "sesiones_indoor": sum(1 for s in run if s.tipo in config.TIPOS_INDOOR),
+        },
+        "ciclismo": {
+            "minutos": minutos(bici),
+            "km": round(sum(s.distancia_km or 0.0 for s in bici), 1),
+            "sesiones": len(bici),
+            "sesiones_indoor": sum(1 for s in bici if s.tipo in config.TIPOS_INDOOR),
+        },
+        "fuerza": {"sesiones": len(fuerza), "minutos": minutos(fuerza)},
+        "otros": [
+            {"tipo": t, "sesiones": len(l), "minutos": minutos(l)}
+            for t, l in sorted(otros.items())
+        ],
+        "nota": (
+            "no hay plan cargado: solo se resume lo realizado, cada deporte en su "
+            "unidad; los deportes no se suman entre si"
+        ),
+    }
+
+
 def construir(
     rango: RangoSemana,
     repo: Repo,
@@ -275,6 +321,9 @@ def construir(
             "inicio": rango.inicio.isoformat(),
             "fin": rango.fin.isoformat(),
             "numero_plan": plan.semana if plan else None,
+            # C-N hacia la carrera principal, fijado al cargar el plan.
+            "semana_carrera": plan.semana_carrera if plan else None,
+            "etiqueta_plan": plan.etiqueta_semana() if plan else None,
             "plan_cargado": plan is not None,
             "en_curso": corte is not None,
             "hasta": fin_ventana.isoformat(),
@@ -320,6 +369,8 @@ def construir(
         ).to_json(),
         "fatiga_descanso": r_fatiga.to_json(),
         "adherencia": r_adh.to_json(),
+        # Solo sin plan: con plan, el reporte mide running contra lo prescrito.
+        "actividad_sin_plan": _por_deporte(sesiones) if plan is None else None,
         "sesiones": [
             {
                 "fecha": s.fecha_local,

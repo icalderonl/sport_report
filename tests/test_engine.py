@@ -379,3 +379,81 @@ def test_json_es_serializable(entorno):
     repo.guardar_sesion(sesion(1, distancia_km=8.0, carga=90.0))
     texto = json.dumps(report.construir(SEMANA, repo, store), ensure_ascii=False)
     assert json.loads(texto)["version"] == report.VERSION_REPORTE
+
+
+# --------------------------------------------------------------------------
+# Semana sin plan: resumen por deporte
+# --------------------------------------------------------------------------
+
+
+def _semana_mixta(repo):
+    repo.guardar_sesion(sesion(0, distancia_km=10.0, duracion_mov_s=3300))
+    repo.guardar_sesion(sesion(2, tipo="VirtualRun", distancia_km=6.0, duracion_mov_s=2100))
+    repo.guardar_sesion(sesion(1, tipo="Ride", distancia_km=40.0, duracion_mov_s=5400))
+    repo.guardar_sesion(sesion(3, tipo="VirtualRide", distancia_km=None, duracion_mov_s=2700))
+    repo.guardar_sesion(sesion(4, tipo="WeightTraining", es_fuerza=True,
+                               distancia_km=None, duracion_mov_s=2400))
+    repo.guardar_sesion(sesion(5, tipo="Swim", distancia_km=1.5, duracion_mov_s=1800))
+
+
+def test_sin_plan_resume_cada_deporte_en_su_unidad(entorno):
+    repo, _ = entorno
+    vacio = PlanStore(actual=repo.path.parent / "no.json", archivo=repo.path.parent / "nada")
+    _semana_mixta(repo)
+    a = report.construir(SEMANA, repo, vacio)["actividad_sin_plan"]
+    assert a["running"] == {"km": 16.0, "minutos": 90, "sesiones": 2, "sesiones_indoor": 1}
+    assert a["ciclismo"] == {"minutos": 135, "km": 40.0, "sesiones": 2, "sesiones_indoor": 1}
+    assert a["fuerza"] == {"sesiones": 1, "minutos": 40}
+    assert a["otros"] == [{"tipo": "Swim", "sesiones": 1, "minutos": 30}]
+
+
+def test_sin_plan_el_ciclismo_no_entra_al_volumen_de_running(entorno):
+    repo, _ = entorno
+    vacio = PlanStore(actual=repo.path.parent / "no.json", archivo=repo.path.parent / "nada")
+    _semana_mixta(repo)
+    j = report.construir(SEMANA, repo, vacio)
+    assert j["volumen"]["real_km"] == 16.0
+
+
+def test_con_plan_no_hay_resumen_por_deporte(entorno):
+    repo, store = entorno
+    _semana_mixta(repo)
+    assert report.construir(SEMANA, repo, store)["actividad_sin_plan"] is None
+
+
+def test_la_frase_sin_plan_nombra_solo_lo_que_hubo():
+    from sport_report.telegram.formato import frase_sin_plan
+
+    base = {
+        "running": {"km": 32.5, "minutos": 180, "sesiones": 4, "sesiones_indoor": 0},
+        "ciclismo": {"minutos": 95, "km": 30.0, "sesiones": 2, "sesiones_indoor": 1},
+        "fuerza": {"sesiones": 2, "minutos": 80},
+        "otros": [],
+    }
+    assert frase_sin_plan(base) == (
+        "Hiciste 32.5 km de running, 95 min de ciclismo y 2 sesiones de fuerza."
+    )
+    solo_run = {**base,
+                "ciclismo": {"minutos": 0, "km": 0.0, "sesiones": 0, "sesiones_indoor": 0},
+                "fuerza": {"sesiones": 0, "minutos": 0}}
+    assert frase_sin_plan(solo_run) == "Hiciste 32.5 km de running."
+    nada = {**solo_run, "running": {"km": 0.0, "minutos": 0, "sesiones": 0, "sesiones_indoor": 0}}
+    assert frase_sin_plan(nada) == "No hay actividad registrada esta semana."
+
+
+def test_el_reporte_sin_plan_muestra_la_actividad_por_deporte(entorno):
+    from sport_report.telegram.formato import formatear_progreso, formatear_reporte
+
+    repo, _ = entorno
+    vacio = PlanStore(actual=repo.path.parent / "no.json", archivo=repo.path.parent / "nada")
+    _semana_mixta(repo)
+    j = report.construir(SEMANA, repo, vacio)
+    texto = formatear_reporte(j)
+    assert "ACTIVIDAD (sin plan cargado)" in texto
+    assert "16 km de running, 135 min de ciclismo, 1 sesion de fuerza y 30 min de natacion" in texto
+    assert "1 en cinta" in texto and "1 indoor" in texto
+    assert "planificados" not in texto, "sin plan no hay nada contra que comparar"
+
+    j = report.construir(SEMANA, repo, vacio, hasta=SEMANA.inicio + timedelta(days=3))
+    p = formatear_progreso(j)
+    assert "Hiciste 16 km de running" in p and "No hay plan cargado" in p

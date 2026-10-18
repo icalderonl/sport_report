@@ -6,6 +6,7 @@ Asi los comandos se testean enteros sin red ni bot token.
 from __future__ import annotations
 
 import unicodedata
+from dataclasses import replace
 from datetime import date, timedelta
 from typing import Any
 
@@ -14,7 +15,7 @@ from ..fechas import RangoSemana, semana_a_reportar
 from ..plan.errors import PlanInvalido
 from ..plan.carrera import Carrera, CarreraInvalida, CarreraStore, parse_fecha
 from ..plan.grammar import parse_dias, parse_plan
-from ..plan.models import DIAS, ORDEN_DIAS
+from ..plan.models import DIAS, ORDEN_DIAS, PlanSemanal
 from ..plan.render import resumen
 from ..plan.store import DiaSinFuerza, PlanStore, resolver_rango
 
@@ -24,7 +25,6 @@ AYUDA = """Comandos:
   Escribe el plan en las lineas siguientes al comando:
 
   /setplan
-  semana: 5
   L: rest
   M: easy 8km Z2
   W: fuerza
@@ -33,6 +33,8 @@ AYUDA = """Comandos:
   S: rest
   D: long 16km @6:15/5:45 Z2
 
+  La linea `semana: <N>` es opcional: sin ella, la semana se cuenta hacia
+  la carrera principal (`Fedachi - 3` = a tres semanas de la Fedachi).
   Los 7 dias son obligatorios (usa `rest` si no hay sesion). Un dia puede
   tener mas de una linea (por ejemplo `J: easy 8km Z2` y `J: fuerza`).
   `/setplan proxima` ancla el plan a la semana siguiente.
@@ -44,9 +46,11 @@ AYUDA = """Comandos:
 
   Para dejar dos sesiones ese dia, manda las dos lineas en el mismo comando.
 
-/carrera <YYYY-MM-DD> [nombre] — declara la carrera objetivo, que se conserva
-  entre semanas (`/setplan` no la borra). `/carrera` la consulta y
-  `/carrera borrar` la quita.
+/carrera <YYYY-MM-DD> [nombre] — agrega una carrera objetivo. Se conservan
+  entre semanas (`/setplan` no las borra) y puede haber varias. La primera
+  queda como principal: define la fase del ciclo y la cuenta regresiva del plan.
+  `/carrera` las lista, `/carrera principal <n>` cambia la principal y
+  `/carrera borrar <n>` quita una (<n> es su numero en la lista, o su fecha).
 
 /plan — muestra el plan cargado y el estado de las sesiones de fuerza.
 /fuerza <dia> — marca una fuerza como cumplida (L M W J V S D o el nombre).
@@ -99,7 +103,9 @@ def parse_dia(arg: str) -> str:
 # --------------------------------------------------------------------------
 
 
-def cmd_setplan(store: PlanStore, texto: str) -> str:
+def cmd_setplan(
+    store: PlanStore, texto: str, carrera_store: CarreraStore | None = None
+) -> str:
     sufijo, cuerpo = _separar(texto)
     try:
         rango = resolver_rango(sufijo)
@@ -114,10 +120,45 @@ def cmd_setplan(store: PlanStore, texto: str) -> str:
     except PlanInvalido as exc:
         return exc.render()
 
+    nota = ""
+    if plan.semana is None:
+        plan, nota = _semana_desde_carrera(plan, rango, carrera_store)
+
     anclado = store.guardar(plan, rango)
     return (
-        f"Plan cargado para la semana {anclado.rango}.\n\n"
-        f"{resumen(anclado.plan, con_fuerza=True)}"
+        f"Plan cargado para la semana {anclado.rango}.\n"
+        + (f"{nota}\n" if nota else "")
+        + f"\n{resumen(anclado.plan, con_fuerza=True)}"
+    )
+
+
+def _semana_desde_carrera(
+    plan: PlanSemanal, rango: RangoSemana, carrera_store: CarreraStore | None
+) -> tuple[PlanSemanal, str]:
+    """Numera el plan como '<carrera> - N' contando hacia la carrera principal.
+
+    Se cuenta desde la semana a la que se ANCLA el plan, no desde hoy: un
+    `/setplan proxima` cargado el domingo es una semana mas cerca. Sin
+    principal, o con la principal ya pasada, el plan se acepta sin numero:
+    rechazarlo por eso bloquearia cargar el plan de una semana sin carrera.
+    """
+    principal = (carrera_store or CarreraStore()).principal()
+    if principal is None:
+        return plan, (
+            "Sin numero de semana: no pusiste `semana:` y no hay carrera principal "
+            "(declarala con /carrera)."
+        )
+    restantes = principal.semanas_restantes(rango.inicio)
+    if restantes < 0:
+        return plan, (
+            f"Sin numero de semana: la carrera principal ({_etiqueta(principal)}) "
+            "ya paso. Declara la siguiente con /carrera."
+        )
+    numerado = replace(plan, semana_carrera=restantes, carrera_nombre=principal.nombre)
+    return (
+        numerado,
+        f"Semana {numerado.etiqueta_semana()}: a {restantes} semana(s) de la carrera "
+        "principal.",
     )
 
 
@@ -214,42 +255,119 @@ def cmd_corregir(
 
 
 _BORRAR = ("borrar", "quitar", "eliminar", "none", "ninguna")
+_PRINCIPAL = ("principal", "objetivo", "main")
+
+
+def _elegir_carrera(carreras: list[Carrera], sel: str) -> Carrera:
+    """Resuelve `<n>` (posicion en la lista de `/carrera`) o una fecha ISO."""
+    sel = sel.strip()
+    if not carreras:
+        raise CarreraInvalida("no hay carreras declaradas")
+    if sel.isdigit() and len(sel) <= 3:
+        n = int(sel)
+        if 1 <= n <= len(carreras):
+            return carreras[n - 1]
+        raise CarreraInvalida(f"no hay carrera {n}: la lista va de 1 a {len(carreras)}")
+    try:
+        fecha = date.fromisoformat(sel)
+    except ValueError:
+        raise CarreraInvalida(
+            f"'{sel}' no es ni un numero de la lista ni una fecha YYYY-MM-DD"
+        ) from None
+    for c in carreras:
+        if c.fecha == fecha:
+            return c
+    raise CarreraInvalida(f"no hay ninguna carrera el {fecha}")
 
 
 def cmd_carrera(store: CarreraStore, arg: str, hoy: date | None = None) -> str:
-    """Declara, consulta o borra la carrera objetivo."""
+    """Agrega, lista, borra o elige la principal entre las carreras objetivo."""
     dia = hoy or fechas.hoy_local()
     arg = (arg or "").strip()
 
     if not arg:
-        carrera = store.cargar()
-        if carrera is None:
-            return (
-                "No hay carrera declarada. Se declara asi:\n"
-                "  /carrera 2026-11-15 Maraton de Santiago"
-            )
-        return _describir_carrera(carrera, dia)
-
-    if _sin_tildes(arg.lower()) in _BORRAR:
-        if store.borrar():
-            return "Carrera borrada."
-        return "No habia ninguna carrera declarada."
+        return _listar_carreras(store, dia)
 
     partes = arg.split(None, 1)
+    verbo = _sin_tildes(partes[0].lower())
+    resto = partes[1].strip() if len(partes) > 1 else ""
+
+    if verbo in _BORRAR:
+        return _borrar_carrera(store, resto, dia)
+
+    if verbo in _PRINCIPAL:
+        try:
+            elegida = _elegir_carrera(store.listar(), resto)
+        except CarreraInvalida as exc:
+            return _cap(str(exc)) + ". Usa `/carrera principal <n>` con un numero de la lista."
+        store.marcar_principal(elegida.fecha)
+        return "Carrera principal actualizada.\n\n" + _listar_carreras(store, dia)
+
     try:
         fecha = parse_fecha(partes[0], dia)
     except CarreraInvalida as exc:
         return _cap(str(exc))
 
-    nombre = partes[1].strip() if len(partes) > 1 else ""
-    carrera = store.guardar(Carrera(fecha=fecha, nombre=nombre))
-    return "Carrera declarada.\n" + _describir_carrera(carrera, dia)
+    carrera, es_principal = store.agregar(Carrera(fecha=fecha, nombre=resto))
+    if es_principal:
+        cabecera = "Carrera agregada como principal."
+    elif store.principal() is None:
+        cabecera = (
+            "Carrera agregada. No hay principal: elige una con "
+            "`/carrera principal <n>`."
+        )
+    else:
+        cabecera = "Carrera agregada (no es la principal)."
+    return cabecera + "\n\n" + _listar_carreras(store, dia)
 
 
-def _describir_carrera(carrera: Carrera, hoy: date) -> str:
-    c = carrera.contexto(hoy)
-    etiqueta = f"{c['fecha']}" + (f" — {c['nombre']}" if c["nombre"] else "")
-    return f"{etiqueta}\n  {_cap(c['nota'])}"
+def _borrar_carrera(store: CarreraStore, sel: str, dia: date) -> str:
+    carreras = store.listar()
+    if not carreras:
+        store.borrar()  # un archivo ilegible tambien se limpia
+        return "No habia ninguna carrera declarada."
+    if not sel:
+        if len(carreras) > 1:
+            return (
+                "Hay varias carreras: indica cual con `/carrera borrar <n>`.\n\n"
+                + _listar_carreras(store, dia)
+            )
+        sel = carreras[0].fecha.isoformat()
+    try:
+        elegida = _elegir_carrera(carreras, sel)
+    except CarreraInvalida as exc:
+        return _cap(str(exc)) + "."
+    borrada, era_principal = store.borrar(elegida.fecha)
+    texto = f"Carrera borrada: {_etiqueta(borrada)}."
+    if era_principal and store.listar():
+        texto += (
+            "\nEra la principal y no se eligio otra sola: indica cual con "
+            "`/carrera principal <n>`.\n\n" + _listar_carreras(store, dia)
+        )
+    return texto
+
+
+def _etiqueta(carrera: Carrera) -> str:
+    return carrera.fecha.isoformat() + (f" — {carrera.nombre}" if carrera.nombre else "")
+
+
+def _listar_carreras(store: CarreraStore, hoy: date) -> str:
+    carreras = store.listar()
+    if not carreras:
+        return (
+            "No hay carrera declarada. Se declara asi:\n"
+            "  /carrera 2026-11-15 Maraton de Santiago"
+        )
+    principal = store.principal()
+    lineas = ["Carreras:"]
+    for i, c in enumerate(carreras, 1):
+        marca = " [principal]" if principal and c.fecha == principal.fecha else ""
+        lineas.append(f"{i}. {_etiqueta(c)}{marca}")
+        lineas.append(f"   {_cap(c.contexto(hoy)['nota'])}")
+    if principal is None:
+        lineas.append("")
+        lineas.append("Ninguna es la principal: elige una con `/carrera principal <n>`.")
+    return "\n".join(lineas)
 
 
 def cmd_progreso(
@@ -384,6 +502,6 @@ def cmd_estado(store: PlanStore) -> str:
         return f"Semana a reportar: {objetivo}\nNo hay plan guardado para esa semana."
     return (
         f"Semana a reportar: {objetivo}\n"
-        f"Plan encontrado: semana {anclado.plan.semana} "
+        f"Plan encontrado: semana {anclado.plan.etiqueta_semana() or 'sin numero'} "
         f"({anclado.plan.volumen_planificado_km():g} km planificados)"
     )

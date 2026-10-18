@@ -62,6 +62,10 @@ Como leer el JSON:
 - Un bloque con "confiable": false NO es un hecho. Si lo mencionas, di
   explicitamente que no es confiable y por que (esta en "motivo").
 - "avisos_datos" describe huecos de datos. Si hay alguno relevante, mencionalo.
+- Si "actividad_sin_plan" no es null, esa semana NO hubo plan cargado: no hables
+  de adherencia ni de volumen planificado. Resume lo realizado con ese bloque,
+  cada deporte en su unidad (km de running, minutos de ciclismo, sesiones de
+  fuerza) y sin sumar deportes entre si.
 - Una adherencia con "pct": null es un DATO FALTANTE, no un incumplimiento. Nunca
   la presentes como sesion no hecha.
 - Los valores de "umbrales" son de literatura general, no estan calibrados a este
