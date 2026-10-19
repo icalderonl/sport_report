@@ -252,3 +252,17 @@ def test_el_post_carrera_compara_con_el_estimado_de_la_vispera(repo, tmp_path):
     assert ev["disponible"] and ev["origen"] == "carrera"
     # Real 21.0975 km a 5:10 = 1:49:00, 1.2% mas rapido que lo estimado.
     assert ev["estimado"] == "1:50:19" and ev["diferencia_pct"] == -1.2
+
+
+def test_tanda_fuera_de_la_muestra_baja_la_confianza(repo):
+    lunes = semana_de(HOY).inicio
+    for i in range(1, 9):
+        for d in (1, 3, 5, 6):
+            corrida(repo, lunes - timedelta(weeks=i) + timedelta(days=d), 12.5, seg_km=360)
+    maraton = Carrera(fecha=OBJETIVO.fecha, distancia_km=MARATON_KM)
+    t = next(e for e in m_est.estimar(maraton, repo, HOY)["estimaciones"] if e["metodo"] == "tanda")
+    assert t["confianza"] == m_est.BAJA
+    assert "6:00/km" in t["fuera_de_muestra"][0]
+    # Rango: +-2 errores estandar de 5.77 s/km sobre 42.195 km = +-487 s.
+    lo, hi = t["rango_s"]
+    assert round((hi - lo) / 2) == 487

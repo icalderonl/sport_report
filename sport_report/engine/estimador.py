@@ -217,12 +217,22 @@ def _por_tanda(
     k = km / cfg.tanda_semanas
     p = sum(s.duracion_mov_s for s in corridas) / km
     central = tanda_ritmo(k, p) * distancia
-    error = central * cfg.tanda_error_pct / 100
+    error = cfg.tanda_see_s_km * cfg.tanda_rango_see * distancia
+    fuera = []
+    if not cfg.tanda_km_min <= k <= cfg.tanda_km_max:
+        fuera.append(
+            f"{round(k, 1):g} km/semana (muestra: {cfg.tanda_km_min:g}-{cfg.tanda_km_max:g})"
+        )
+    if not cfg.tanda_ritmo_min_s_km <= p <= cfg.tanda_ritmo_max_s_km:
+        fuera.append(
+            f"ritmo medio {fmt_ritmo(p)} (muestra: {fmt_ritmo(cfg.tanda_ritmo_min_s_km)}"
+            f" a {fmt_ritmo(cfg.tanda_ritmo_max_s_km)})"
+        )
     return {
         "metodo": "tanda",
         "origen": "volumen y ritmo de entrenamiento",
         **_bloque(central, central - error, central + error, distancia),
-        "confianza": MEDIA if k >= cfg.tanda_km_min else BAJA,
+        "confianza": BAJA if fuera else MEDIA,
         "referencia": {
             "desde": inicio.isoformat(),
             "hasta": fin.isoformat(),
@@ -230,14 +240,11 @@ def _por_tanda(
             "ritmo_medio": fmt_ritmo(p),
             "corridas": len(corridas),
         },
+        "fuera_de_muestra": fuera,
         "nota": (
-            f"formula de Tanda para maraton, error tipico de +-{cfg.tanda_error_pct:g}%"
-            + (
-                ""
-                if k >= cfg.tanda_km_min
-                else f"; con menos de {cfg.tanda_km_min:g} km/semana queda fuera de "
-                "la muestra con que se ajusto"
-            )
+            f"formula de Tanda para maraton; rango de +-{cfg.tanda_rango_see:g} errores "
+            f"estandar ({cfg.tanda_see_s_km:g} s/km cada uno)"
+            + ("; fuera de la muestra del paper: " + ", ".join(fuera) if fuera else "")
         ),
     }
 
@@ -312,7 +319,8 @@ def estimar(
         "principal": estimaciones[0],
         "estimaciones": estimaciones,
         "nota": (
-            "sin correccion por desnivel ni calor (la base no los guarda). "
+            "estado de forma actual: no proyecta el entrenamiento que falta hasta "
+            "la carrera. Sin correccion por desnivel ni calor (la base no los guarda). "
             "Riegel con exponente "
             f"{cfg.exponente:g} (rango {cfg.exponente_min:g}-{cfg.exponente_max:g})"
         ),
@@ -360,5 +368,8 @@ def resumen(est: dict[str, Any]) -> str:
             f"- {e['central']} ({e['ritmo']}), rango {e['rango']}, "
             f"confianza {e['confianza']} — {fuente}"
         )
-    lineas.append("Sin correccion por desnivel ni calor.")
+    lineas.append(
+        "Con tu estado de forma actual: no proyecta lo que falta entrenar. "
+        "Sin correccion por desnivel ni calor."
+    )
     return "\n".join(lineas)

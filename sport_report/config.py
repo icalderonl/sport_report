@@ -180,12 +180,18 @@ class Estimador:
     # Ventana de entrenamientos para los mejores segmentos.
     semanas_entrenamiento: int = 12
     segmentos_km: tuple[float, ...] = (3.0, 5.0, 10.0, 15.0, 21.0975)
-    # Tanda (2011), solo maraton: ventana y error tipico publicado.
+    # Tanda (2011, J Hum Sport Exerc 6(3)), solo maraton. Ventana de 8 semanas
+    # que en el paper termina 7 dias antes de la carrera. Error estandar de la
+    # estimacion: 5.77 s/km (~4 min en maraton); el rango usa 2 errores (~95%).
     tanda_semanas: int = 8
-    tanda_error_pct: float = 4.0
-    # Bajo este volumen semanal la formula queda fuera de la muestra con que
-    # se ajusto, y la confianza baja.
-    tanda_km_min: float = 30.0
+    tanda_see_s_km: float = 5.77
+    tanda_rango_see: float = 2.0
+    # Rango de la muestra con que se ajusto (22 corredores, 46 maratones). Fuera
+    # de el la formula extrapola y la confianza baja.
+    tanda_km_min: float = 40.4
+    tanda_km_max: float = 110.7
+    tanda_ritmo_min_s_km: float = 253.3
+    tanda_ritmo_max_s_km: float = 330.6
     tanda_distancia_min_km: float = 40.0
 
 

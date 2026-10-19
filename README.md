@@ -245,13 +245,16 @@ Necesita la distancia de la carrera (`/carrera <fecha> 21k ...`, o se deduce de
 preferencia y ordenados por confianza: **Riegel desde una carrera** declarada de
 las últimas 16 semanas (alta si tiene menos de 8 semanas y la distancia no se
 extrapola más de x2), **Tanda** solo para maratón (km semanales y ritmo medio de
-las 8 semanas previas; da ritmo de maratón, no tiempo) y **Riegel desde el mejor
+las 8 semanas previas; da ritmo de maratón, no tiempo; error estándar 5.77 s/km,
+rango de ±2 errores, y confianza baja fuera de la muestra del paper: 40-111
+km/semana y 4:13-5:31/km) y **Riegel desde el mejor
 tramo continuo** de 3/5/10/15/21 km de los entrenamientos de 12 semanas, armado
 con las vueltas. Este último es siempre de confianza baja y conservador: un
 entrenamiento es submáximo. El rango de Riegel recorre el exponente entre 1.04 y
 1.10; nunca se extrapola más de x4 en distancia. Cinta (`VirtualRun`) y trail no
 sirven de referencia, y no hay corrección por desnivel ni calor porque la base no
-los guarda. El estimado va al final del semanal, armado por el código y **fuera
+los guarda. Mide el **estado de forma actual**: no proyecta el
+entrenamiento que falta hasta la carrera. El estimado va al final del semanal, armado por el código y **fuera
 del prompt** de la narrativa, y el informe post-carrera lo compara con el tiempo
 real usando el estimado que había la víspera.
 
@@ -409,7 +412,7 @@ En un intérprete más viejo `pip` descarta en silencio las versiones que piden
 la Pi usa 1.x. Los tests pasan igual y estarías probando contra un major que
 en producción no existe. La CI corre en 3.11 y 3.12 justamente por esto.
 
-768 tests, ninguno toca la red: intervals.icu, Strava, Telegram y Claude se
+769 tests, ninguno toca la red: intervals.icu, Strava, Telegram y Claude se
 prueban con dobles (`httpx.MockTransport` para los clientes HTTP).
 `tests/test_regresiones.py` fija los bugs ya corregidos: cada test de ahí falla
 si se revierte su arreglo.
