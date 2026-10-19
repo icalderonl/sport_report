@@ -37,6 +37,9 @@ entrenamiento con su comparacion contra el ciclo anterior.
   NUNCA lo combines con otras cifras en un puntaje o juicio unico.
 - "ciclo" es null si la carrera no era la principal: entonces no hables de
   ciclo ni de afinamiento.
+- "estimado_vs_real" compara el tiempo que el estimador daba la vispera con
+  el real ("diferencia" negativa = mas rapido que lo estimado). Si
+  "disponible" es false, no lo menciones.
 - En "carreras_similares", "delta_ritmo_s_km" negativo significa que esta
   carrera fue mas rapida; esta en segundos por kilometro.
 

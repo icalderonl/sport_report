@@ -21,12 +21,13 @@ import json
 import logging
 import sys
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
 from . import config, fuentes
 from .db.repo import Repo
+from .engine import estimador as m_estimador
 from .engine import mensual as m_mensual
 from .engine import report
 from .fechas import (
@@ -214,6 +215,24 @@ def ejecutar(
             problemas.append(f"resumen automatico no disponible ({n.error})")
             datos["narrativa"] = n.to_json()
 
+    # Estimado para la carrera principal. Va despues de la narrativa a
+    # proposito: el modelo semanal no lo ve ni lo cita, y el texto lo arma el
+    # codigo. Un fallo aca no puede costar el reporte.
+    texto_estimado = None
+    try:
+        store_c = carrera_store or CarreraStore()
+        principal = store_c.principal()
+        if principal is not None and principal.fecha > rango.fin:
+            est = m_estimador.estimar(
+                principal, repo, hoy=rango.fin + timedelta(days=1),
+                carreras=store_c.listar(),
+            )
+            datos["estimacion_carrera"] = est
+            texto_estimado = m_estimador.resumen(est)
+    except Exception as exc:
+        log.warning("sin estimado de carrera: %s", exc)
+        problemas.append(f"estimado de carrera no disponible ({exc})")
+
     if guardar:
         _guardar_reporte(rango, datos)
 
@@ -232,6 +251,8 @@ def ejecutar(
 
     # 5. Formateo y envio --------------------------------------------------
     mensaje = formatear_reporte(datos, texto_narrativa)
+    if texto_estimado:
+        mensaje += "\n\n" + texto_estimado
     enviado = True
     if enviador is not None:
         envio = enviador(mensaje)

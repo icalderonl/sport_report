@@ -84,6 +84,11 @@ def on_carrera(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
 
 
 @_handler
+def on_estimar(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
+    return comandos.cmd_estimar(_carrera, " ".join(ctx.args or []))
+
+
+@_handler
 def on_plan(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
     return comandos.cmd_plan(_store)
 
@@ -138,6 +143,7 @@ def main() -> None:
     app.add_handler(CommandHandler("setplan", on_setplan))
     app.add_handler(CommandHandler(["corregir", "corrige"], on_corregir))
     app.add_handler(CommandHandler("carrera", on_carrera))
+    app.add_handler(CommandHandler("estimar", on_estimar))
     app.add_handler(CommandHandler("plan", on_plan))
     app.add_handler(CommandHandler("fuerza", on_fuerza))
     app.add_handler(CommandHandler("estado", on_estado))

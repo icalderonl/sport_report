@@ -119,6 +119,13 @@ def formatear(datos: dict[str, Any], narrativa: str | None) -> str:
         )
         lineas.append("Cuartos " + " / ".join(q["ritmo"] for q in p["cuartos"]))
 
+    ev = datos.get("estimado_vs_real") or {}
+    if ev.get("disponible"):
+        lineas.append(
+            f"Estimado la vispera {ev['estimado']} (rango {ev['rango']}): "
+            f"real {ev['real']}, {ev['diferencia']} ({_signo(ev['diferencia_pct'])}%)"
+        )
+
     f = datos["fatiga"]
     if f["senales"]:
         lineas += ["", "Senales de fatiga:"] + [f"- {s}" for s in f["senales"]]
@@ -172,11 +179,14 @@ def ejecutar(
     hoy: date | None = None,
     forzar: bool = False,
     cfg: PostCarrera = POST_CARRERA,
+    carreras: Sequence[Carrera] = (),
 ) -> Resultado:
     """Informe de una carrera. No lanza salvo un fallo del motor de calculo."""
     hoy = hoy or hoy_local()
     problemas: list[str] = []
-    datos = m_post.construir(carrera, es_principal, repo, plan_store, cfg)
+    datos = m_post.construir(
+        carrera, es_principal, repo, plan_store, cfg, carreras=carreras
+    )
 
     if not datos["actividad"]["disponible"] and not forzar and not ultimo_intento(
         carrera, hoy, cfg
@@ -303,6 +313,7 @@ def main(argv: list[str] | None = None) -> int:
                 guardar=not a.dry_run,
                 hoy=hoy,
                 forzar=bool(a.fecha),
+                carreras=carreras,
             )
             log.info("informe post-carrera %s: %s %s", c.fecha, r.estado, r.problemas)
             if a.dry_run and r.mensaje:

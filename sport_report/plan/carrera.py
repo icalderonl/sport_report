@@ -16,6 +16,7 @@ correr se dice "corrida" en todo el resto del codigo (`es_run`,
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -49,6 +50,8 @@ class Carrera:
     fecha: date
     nombre: str = ""
     creado_en: str = ""
+    #: None si no se declaro: el estimador de tiempo la necesita y la pide.
+    distancia_km: float | None = None
 
     def semanas_restantes(self, hoy: date | None = None) -> int:
         """Semanas completas entre la semana de `hoy` y la de la carrera.
@@ -100,12 +103,17 @@ class Carrera:
         }
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        d = {
             "version": VERSION_FORMATO,
             "fecha": self.fecha.isoformat(),
             "nombre": self.nombre,
             "creado_en": self.creado_en,
         }
+        # Campo opcional y aditivo: no sube el formato. Una version anterior
+        # del codigo lo ignora en vez de rechazar el archivo.
+        if self.distancia_km is not None:
+            d["distancia_km"] = self.distancia_km
+        return d
 
     @staticmethod
     def from_json(d: dict[str, Any]) -> "Carrera":
@@ -119,10 +127,17 @@ class Carrera:
             fecha = date.fromisoformat(d["fecha"])
         except (KeyError, TypeError, ValueError) as exc:
             raise CarreraInvalida(f"la carrera guardada no trae una fecha valida: {exc}") from exc
+        distancia = d.get("distancia_km")
+        try:
+            distancia = float(distancia) if distancia is not None else None
+        except (TypeError, ValueError):
+            log.error("distancia de la carrera %s invalida: %r", fecha, distancia)
+            distancia = None
         return Carrera(
             fecha=fecha,
             nombre=str(d.get("nombre", "")),
             creado_en=str(d.get("creado_en", "")),
+            distancia_km=distancia,
         )
 
 
@@ -153,6 +168,47 @@ def parse_fecha(texto: str, hoy: date | None = None) -> date:
             "se colo un tecleo"
         )
     return fecha
+
+
+#: Distancias oficiales. "21k" y "42k" son como se nombran la media y la
+#: maraton; el estimador necesita la distancia real.
+MEDIA_MARATON_KM = 21.0975
+MARATON_KM = 42.195
+_RE_DISTANCIA = re.compile(r"^(\d+(?:[.,]\d+)?)\s*(?:k|km)$", re.I)
+DISTANCIA_MAXIMA_KM = 250.0
+
+
+def parse_distancia(token: str) -> float | None:
+    """'21k', '10km', '42.195k' -> km. None si no es una distancia.
+
+    Solo numeros con unidad: una palabra como "Maraton" es parte del nombre
+    ("Maraton de Santiago") y no se consume; para eso esta `distancia_del_nombre`.
+    """
+    m = _RE_DISTANCIA.match(token.strip())
+    if not m:
+        return None
+    km = float(m.group(1).replace(",", "."))
+    if not 0 < km <= DISTANCIA_MAXIMA_KM:
+        return None
+    if km in (21.0, 21.1):
+        return MEDIA_MARATON_KM
+    if km in (42.0, 42.2):
+        return MARATON_KM
+    return km
+
+
+def distancia_del_nombre(nombre: str) -> float | None:
+    """La distancia que el nombre declara sin ambiguedad, o None.
+
+    "Media Maraton de Santiago" -> 21.0975; "Maraton de Santiago" -> 42.195.
+    Nada mas: "Fedachi" o "Corrida Nocturna" no dicen distancia.
+    """
+    t = nombre.lower().translate(str.maketrans("áéíóú", "aeiou"))
+    if re.search(r"\bmedia\s*-?\s*maraton\b|\bmedio\s*maraton\b|\b21\s*k\b", t):
+        return MEDIA_MARATON_KM
+    if re.search(r"\bmaraton\b|\b42\s*k\b", t):
+        return MARATON_KM
+    return None
 
 
 class CarreraStore:
@@ -219,7 +275,13 @@ class CarreraStore:
             previa = next((c for c in carreras if c.fecha == carrera.fecha), None)
             nueva = Carrera(
                 fecha=carrera.fecha,
-                nombre=carrera.nombre,
+                # Redeclarar la fecha sin nombre o sin distancia no los borra.
+                nombre=carrera.nombre or (previa.nombre if previa else ""),
+                distancia_km=(
+                    carrera.distancia_km
+                    if carrera.distancia_km is not None
+                    else (previa.distancia_km if previa else None)
+                ),
                 creado_en=carrera.creado_en
                 or (previa.creado_en if previa else "")
                 or ahora_local().isoformat(timespec="seconds"),

@@ -545,8 +545,16 @@ def construir(
     plan_store: PlanStore | None = None,
     cfg: PostCarrera = POST_CARRERA,
     umbrales: Umbrales = UMBRALES,
+    carreras: Sequence[Carrera] = (),
 ) -> dict[str, Any]:
-    """JSON del informe post-carrera. Unica fuente de sus cifras."""
+    """JSON del informe post-carrera. Unica fuente de sus cifras.
+
+    `carreras` son todas las declaradas: las anteriores sirven de referencia
+    para el estimado que habia la vispera.
+    """
+    # Import local: el estimador reusa helpers de este modulo.
+    from . import estimador
+
     plan_store = plan_store or PlanStore()
     fecha = carrera.fecha
     s = actividad_de_carrera(repo.sesiones_entre(fecha, fecha), fecha)
@@ -596,6 +604,10 @@ def construir(
             fecha,
         ),
         "ciclo": datos_ciclo,
+        "estimado_vs_real": estimador.comparar(
+            estimador.estimar(carrera, repo, hoy=fecha, carreras=carreras),
+            s.duracion_mov_s if s is not None else None,
+        ),
         "comparacion": {
             "ciclo_anterior": comparacion_ciclo,
             "carreras_similares": _carreras_similares(actividad, previos, cfg),

@@ -159,12 +159,43 @@ class PostCarrera:
     distancia_similar_pct: float = 10.0
 
 
+@dataclass(frozen=True)
+class Estimador:
+    """Estimador de tiempo de carrera (`engine/estimador.py`).
+
+    Convenciones de la literatura, no calibradas a este atleta.
+    """
+
+    # Riegel: T2 = T1 * (D2/D1)^k. 1.06 es el valor clasico; el rango cubre a
+    # un amateur con poco volumen (k alto) y a uno muy entrenado (k bajo).
+    exponente: float = 1.06
+    exponente_min: float = 1.04
+    exponente_max: float = 1.10
+    # No se extrapola mas alla de este factor de distancia (ni hacia arriba ni
+    # hacia abajo): de un 5K a una maraton el error es mayor que el dato.
+    factor_max: float = 4.0
+    # Antiguedad maxima de una carrera de referencia, y la que da confianza alta.
+    semanas_carrera: int = 16
+    semanas_carrera_alta: int = 8
+    # Ventana de entrenamientos para los mejores segmentos.
+    semanas_entrenamiento: int = 12
+    segmentos_km: tuple[float, ...] = (3.0, 5.0, 10.0, 15.0, 21.0975)
+    # Tanda (2011), solo maraton: ventana y error tipico publicado.
+    tanda_semanas: int = 8
+    tanda_error_pct: float = 4.0
+    # Bajo este volumen semanal la formula queda fuera de la muestra con que
+    # se ajusto, y la confianza baja.
+    tanda_km_min: float = 30.0
+    tanda_distancia_min_km: float = 40.0
+
+
 UMBRALES = Umbrales()
 CARGA = Carga()
 ESTIMACION = Estimacion()
 BIENESTAR = Bienestar()
 CARRERA = Carrera()
 POST_CARRERA = PostCarrera()
+ESTIMADOR = Estimador()
 
 # Semanas que muestra el grafico de volumen del reporte.
 SEMANAS_GRAFICO = 16

@@ -81,7 +81,8 @@ y su ausencia no impide que el reporte llegue.
 |---|---|
 | `/setplan` | Carga el plan de la semana |
 | `/corregir <dia>: ...` | Reemplaza las sesiones de un día sin reenviar la semana |
-| `/carrera <fecha> [nombre]` | Agrega una carrera objetivo; `/carrera` las lista, `/carrera principal <n>` elige la principal y `/carrera borrar <n>` quita una |
+| `/carrera <fecha> [distancia] [nombre]` | Agrega una carrera objetivo (`/carrera 2026-11-29 21k Fedachi`); `/carrera` las lista, `/carrera principal <n>` elige la principal y `/carrera borrar <n>` quita una |
+| `/estimar [n]` | Tiempo estimado para la carrera principal (o la `<n>`), con rango y confianza |
 | `/plan` | Plan vigente y estado de fuerza |
 | `/fuerza <dia>` | Marca una sesión de fuerza como cumplida (`anterior`/`proxima` para otra semana) |
 | `/progreso` | Resumen corto: km de los programados y qué entrenamientos quedan |
@@ -238,6 +239,22 @@ sola**: la fase cambiaría sin que el atleta lo haya decidido, así que el bot p
 elegirla. Un archivo del formato anterior (una sola carrera) se lee como esa
 carrera principal y se reescribe en v2 la primera vez que se modifica.
 
+**El estimador de tiempo no da un número sino un rango, y dice de dónde sale.**
+Necesita la distancia de la carrera (`/carrera <fecha> 21k ...`, o se deduce de
+"Media Maratón"/"Maratón" en el nombre). Tres métodos, en este orden de
+preferencia y ordenados por confianza: **Riegel desde una carrera** declarada de
+las últimas 16 semanas (alta si tiene menos de 8 semanas y la distancia no se
+extrapola más de x2), **Tanda** solo para maratón (km semanales y ritmo medio de
+las 8 semanas previas; da ritmo de maratón, no tiempo) y **Riegel desde el mejor
+tramo continuo** de 3/5/10/15/21 km de los entrenamientos de 12 semanas, armado
+con las vueltas. Este último es siempre de confianza baja y conservador: un
+entrenamiento es submáximo. El rango de Riegel recorre el exponente entre 1.04 y
+1.10; nunca se extrapola más de x4 en distancia. Cinta (`VirtualRun`) y trail no
+sirven de referencia, y no hay corrección por desnivel ni calor porque la base no
+los guarda. El estimado va al final del semanal, armado por el código y **fuera
+del prompt** de la narrativa, y el informe post-carrera lo compara con el tiempo
+real usando el estimado que había la víspera.
+
 **El informe post-carrera se intenta el mismo día, a las 21:00.** A esa hora la carrera
 ya terminó y se subió; si la actividad no aparece, se reintenta al día
 siguiente a la misma hora (y entonces trae también el bienestar de la mañana
@@ -392,7 +409,7 @@ En un intérprete más viejo `pip` descarta en silencio las versiones que piden
 la Pi usa 1.x. Los tests pasan igual y estarías probando contra un major que
 en producción no existe. La CI corre en 3.11 y 3.12 justamente por esto.
 
-738 tests, ninguno toca la red: intervals.icu, Strava, Telegram y Claude se
+768 tests, ninguno toca la red: intervals.icu, Strava, Telegram y Claude se
 prueban con dobles (`httpx.MockTransport` para los clientes HTTP).
 `tests/test_regresiones.py` fija los bugs ya corregidos: cada test de ahí falla
 si se revierte su arreglo.
@@ -408,7 +425,7 @@ sport_report/
   intervals/        cliente, tabla de campos, ingesta y verificación (principal)
   strava/           OAuth con rotación, cliente, métricas, ingesta (respaldo)
   db/               esquema y repositorio SQLite
-  engine/           ACWR, Foster, adherencia, vueltas, fatiga, mensual, post-carrera -> JSON único
+  engine/           ACWR, Foster, adherencia, vueltas, fatiga, mensual, post-carrera, estimador -> JSON único
   narrative/        llamada a Claude (semanal, mensual, post-carrera) + verificación de cifras
   telegram/         bot, comandos, formateo, envío de texto e imagen
   grafico.py        gráfico de volumen en PNG (matplotlib)

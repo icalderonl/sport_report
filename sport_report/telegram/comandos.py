@@ -13,7 +13,14 @@ from typing import Any
 from .. import fechas
 from ..fechas import RangoSemana, semana_a_reportar
 from ..plan.errors import PlanInvalido
-from ..plan.carrera import Carrera, CarreraInvalida, CarreraStore, parse_fecha
+from ..plan.carrera import (
+    Carrera,
+    CarreraInvalida,
+    CarreraStore,
+    distancia_del_nombre,
+    parse_distancia,
+    parse_fecha,
+)
 from ..plan.grammar import parse_dias, parse_plan
 from ..plan.models import DIAS, ORDEN_DIAS, PlanSemanal
 from ..plan.render import resumen
@@ -46,14 +53,18 @@ AYUDA = """Comandos:
 
   Para dejar dos sesiones ese dia, manda las dos lineas en el mismo comando.
 
-/carrera <YYYY-MM-DD> [nombre] — agrega una carrera objetivo. Se conservan
+/carrera <YYYY-MM-DD> [distancia] [nombre] — agrega una carrera objetivo. Se conservan
   entre semanas (`/setplan` no las borra) y puede haber varias. La primera
   queda como principal: define la fase del ciclo y la cuenta regresiva del plan.
   `/carrera` las lista, `/carrera principal <n>` cambia la principal y
   `/carrera borrar <n>` quita una (<n> es su numero en la lista, o su fecha).
+  La distancia va despues de la fecha: `/carrera 2026-11-15 21k Fedachi`
+  (o se deduce de un nombre como "Media Maraton de ...").
   El dia de cada carrera, a las 21:00, llega un informe post-carrera (y, si
   era la principal, el cierre del ciclo); si aun no subiste la actividad,
   llega al dia siguiente.
+/estimar [n] — tiempo estimado para la carrera principal (o la <n>), con rango
+  y confianza.
 
 /plan — muestra el plan cargado y el estado de las sesiones de fuerza.
 /fuerza <dia> — marca una fuerza como cumplida (L M W J V S D o el nombre).
@@ -311,7 +322,21 @@ def cmd_carrera(store: CarreraStore, arg: str, hoy: date | None = None) -> str:
     except CarreraInvalida as exc:
         return _cap(str(exc))
 
-    carrera, es_principal = store.agregar(Carrera(fecha=fecha, nombre=resto))
+    # La distancia es opcional y va primero: `/carrera 2026-11-15 21k Fedachi`.
+    distancia = None
+    trozos = resto.split(None, 1)
+    if trozos and (d := parse_distancia(trozos[0])) is not None:
+        distancia = d
+        # Si la distancia es lo unico ("/carrera 2026-10-18 10K"), tambien es
+        # el nombre: dejar la carrera sin nombre seria perder lo que se tecleo.
+        if len(trozos) > 1:
+            resto = trozos[1].strip()
+    else:
+        distancia = distancia_del_nombre(resto)
+
+    carrera, es_principal = store.agregar(
+        Carrera(fecha=fecha, nombre=resto, distancia_km=distancia)
+    )
     if es_principal:
         cabecera = "Carrera agregada como principal."
     elif store.principal() is None:
@@ -351,7 +376,10 @@ def _borrar_carrera(store: CarreraStore, sel: str, dia: date) -> str:
 
 
 def _etiqueta(carrera: Carrera) -> str:
-    return carrera.fecha.isoformat() + (f" — {carrera.nombre}" if carrera.nombre else "")
+    texto = carrera.fecha.isoformat()
+    if carrera.distancia_km is not None:
+        texto += f" ({carrera.distancia_km:g} km)"
+    return texto + (f" — {carrera.nombre}" if carrera.nombre else "")
 
 
 def _listar_carreras(store: CarreraStore, hoy: date) -> str:
@@ -445,6 +473,43 @@ def cmd_progreso(
             resultado.cerrar()
         if repo_propio:
             repo.cerrar()
+
+
+def cmd_estimar(
+    carrera_store: CarreraStore,
+    arg: str = "",
+    repo: Any = None,
+    hoy: date | None = None,
+) -> str:
+    """Estimado de tiempo para la principal, o para la carrera `<n>` / fecha."""
+    from ..engine import estimador
+
+    dia = hoy or fechas.hoy_local()
+    carreras = carrera_store.listar()
+    arg = (arg or "").strip()
+    if arg:
+        try:
+            carrera = _elegir_carrera(carreras, arg)
+        except CarreraInvalida as exc:
+            return _cap(str(exc)) + ". Usa `/estimar <n>` con un numero de `/carrera`."
+    else:
+        carrera = carrera_store.principal()
+        if carrera is None:
+            return "No hay carrera principal. Declarala con `/carrera 2026-11-15 21k Fedachi`."
+    if carrera.fecha < dia:
+        return f"La carrera {_etiqueta(carrera)} ya paso."
+
+    repo_propio = repo is None
+    if repo_propio:
+        from ..db.repo import Repo
+
+        repo = Repo()
+    try:
+        est = estimador.estimar(carrera, repo, hoy=dia, carreras=carreras)
+    finally:
+        if repo_propio:
+            repo.cerrar()
+    return estimador.resumen(est)
 
 
 def cmd_volumen(
