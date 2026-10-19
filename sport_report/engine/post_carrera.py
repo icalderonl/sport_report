@@ -1,6 +1,6 @@
 """Informe post-carrera: analisis de la carrera y cierre del ciclo.
 
-Se dispara el mismo dia de una carrera declarada con /carrera, a las 13:00 (ver
+Se dispara el mismo dia de una carrera declarada con /carrera, a las 21:00 (ver
 `run_post_carrera`). Tres bloques, todos calculados aca:
 
 - **La carrera**: la corrida mas larga de ese dia. Tiempo, ritmo, FC, dinamica

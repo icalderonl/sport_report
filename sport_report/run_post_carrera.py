@@ -2,7 +2,7 @@
 
     python -m sport_report.run_post_carrera [opciones]
 
-Cada dia a las 13:00 mira las carreras declaradas con /carrera. Si alguna es
+Cada dia a las 21:00 mira las carreras declaradas con /carrera. Si alguna es
 de hoy o de los ultimos `POST_CARRERA.dias_ventana` dias y su informe no
 existe, sincroniza, calcula, narra y envia. El primer intento es el mismo dia
 de la carrera; si la actividad todavia no se subio, se reintenta al dia

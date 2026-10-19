@@ -51,7 +51,7 @@ AYUDA = """Comandos:
   queda como principal: define la fase del ciclo y la cuenta regresiva del plan.
   `/carrera` las lista, `/carrera principal <n>` cambia la principal y
   `/carrera borrar <n>` quita una (<n> es su numero en la lista, o su fecha).
-  El dia de cada carrera, a las 13:00, llega un informe post-carrera (y, si
+  El dia de cada carrera, a las 21:00, llega un informe post-carrera (y, si
   era la principal, el cierre del ciclo); si aun no subiste la actividad,
   llega al dia siguiente.
 

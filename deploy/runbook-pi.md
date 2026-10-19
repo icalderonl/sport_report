@@ -198,7 +198,7 @@ sudo systemctl start sport-report-weekly.service
 
 ### Informe post-carrera
 
-`sport-report-carrera.timer` corre todos los dias a las 13:00. Si una carrera
+`sport-report-carrera.timer` corre todos los dias a las 21:00. Si una carrera
 declarada con `/carrera` es de hoy o de los ultimos 3 dias y su informe no existe
 (`data/reportes/carreras/<fecha>.json`), sincroniza, calcula y lo envia; si no,
 termina sin tocar la red. Normalmente llega el mismo dia de la carrera. Si la

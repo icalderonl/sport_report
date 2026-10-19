@@ -133,7 +133,7 @@ class Carrera:
 
 @dataclass(frozen=True)
 class PostCarrera:
-    """Informe post-carrera (`run_post_carrera`): el mismo dia a las 13:00.
+    """Informe post-carrera (`run_post_carrera`): el mismo dia a las 21:00.
 
     Los umbrales de fatiga son convenciones de lectura de parciales, no
     verdades fisiologicas, igual que el resto de esta configuracion.
