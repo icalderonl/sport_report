@@ -131,11 +131,40 @@ class Carrera:
     semanas_construccion: int = 8
 
 
+@dataclass(frozen=True)
+class PostCarrera:
+    """Informe del dia siguiente a una carrera (`run_post_carrera`).
+
+    Los umbrales de fatiga son convenciones de lectura de parciales, no
+    verdades fisiologicas, igual que el resto de esta configuracion.
+    """
+
+    # Semanas que cubre el cierre de ciclo, contando la de la carrera. Si hubo
+    # otra carrera principal reportada dentro de esa ventana, el ciclo empieza
+    # la semana siguiente a ella.
+    semanas_ciclo: int = 16
+    # Dias despues de la carrera en que se sigue intentando el informe si la
+    # actividad todavia no se sincronizo. Pasado el ultimo, se envia sin ella.
+    dias_ventana: int = 3
+    # Segunda mitad mas lenta que la primera en al menos este %: senal de fatiga.
+    split_positivo_pct: float = 3.0
+    # Diferencia bajo la cual el split se lee como parejo.
+    split_parejo_pct: float = 1.0
+    # Ultimo cuarto mas lento que el promedio de los tres primeros en este %.
+    caida_final_pct: float = 3.0
+    # Fraccion minima de la distancia que tienen que cubrir las vueltas para
+    # leer parciales; con menos, las mitades no representan la carrera.
+    cobertura_vueltas_min: float = 0.8
+    # Carreras anteriores con distancia dentro de este % se comparan.
+    distancia_similar_pct: float = 10.0
+
+
 UMBRALES = Umbrales()
 CARGA = Carga()
 ESTIMACION = Estimacion()
 BIENESTAR = Bienestar()
 CARRERA = Carrera()
+POST_CARRERA = PostCarrera()
 
 # Semanas que muestra el grafico de volumen del reporte.
 SEMANAS_GRAFICO = 16

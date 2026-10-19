@@ -309,8 +309,13 @@ def _redactar(
     cliente: Any | None,
     modelo: str | None,
     api_key: str | None,
+    metricas: tuple[tuple[str, re.Pattern[str], tuple[tuple[str, ...], ...]], ...] | None = None,
 ) -> Narrativa:
-    """Una llamada a Claude con el prompt mensual dado. Nunca lanza."""
+    """Una llamada a Claude con el prompt mensual dado. Nunca lanza.
+
+    `metricas` es la tabla de atribucion; por defecto la mensual. El informe
+    post-carrera reusa esta funcion con la suya.
+    """
     modelo = modelo or config.ANTHROPIC_MODEL_MENSUAL
     try:
         cliente = cliente or _cliente(api_key)
@@ -345,7 +350,9 @@ def _redactar(
         tokens_entrada=int(getattr(uso, "input_tokens", 0) or 0),
         tokens_salida=int(getattr(uso, "output_tokens", 0) or 0),
         numeros_no_verificados=verificar_cifras(texto, datos),
-        cifras_mal_atribuidas=verificar_atribucion(texto, datos, METRICAS_MENSUALES),
+        cifras_mal_atribuidas=verificar_atribucion(
+            texto, datos, metricas if metricas is not None else METRICAS_MENSUALES
+        ),
     )
     if n.numeros_no_verificados:
         log.warning("cifras sin respaldo en el mensual: %s", n.numeros_no_verificados)

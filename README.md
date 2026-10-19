@@ -13,7 +13,11 @@ calculadas**. Una vez al mes añade el reporte mensual, **solo de carrera**,
 narrado por un modelo más capaz y partido en dos mensajes: **actividad**
 (volumen, adherencia, largos de la semana y comparativa de calidad
 tempo/series/fartlek, siempre) y **fatiga y dinámica** (solo si hubo una
-variación relevante contra el mes anterior).
+variación relevante contra el mes anterior). Y el **día siguiente a una
+carrera** declarada llega el **informe post-carrera**: tiempo, ritmo, FC,
+parciales por mitades y cuartos, señales de fatiga y, si era la principal, el
+cierre del ciclo (volumen, pico, afinamiento, adherencia) comparado con el
+ciclo anterior.
 
 Fuente de datos: **intervals.icu**, con **Strava como respaldo** si esa falla.
 El plan se carga a mano por Telegram. Una semana sin plan se reporta igual:
@@ -39,11 +43,16 @@ data/carrera.json      (las carreras objetivo y cual es la principal)
 
   una vez al mes, además:  agregados del mes (solo carrera)
                              -> Claude (modelo mayor) -> un mensaje narrado
+
+[timer diario 10:00] -> ¿carrera ayer (o hasta 3 días) sin informe?
+                          no -> termina sin tocar la red
+                          sí -> sincroniza -> análisis + ciclo -> Claude -> Telegram
 ```
 
 Dos procesos en la Pi: el **bot** corre siempre (systemd, long polling — la Pi
 está detrás de NAT doméstico y un webhook exigiría puerto público y TLS) y la
-**corrida semanal** la dispara un timer.
+**corrida semanal** la dispara un timer. Un segundo timer, diario, dispara el
+informe post-carrera cuando corresponde.
 
 ## Instalación
 
@@ -85,6 +94,7 @@ y su ausencia no impide que el reporte llegue.
 |---|---|
 | `python -m sport_report.diagnostico` | **Empieza por acá cuando algo falle.** Chequea todo sin tocar la red |
 | `python -m sport_report.run_weekly --dry-run` | Imprime el reporte sin enviarlo y deja el gráfico en disco |
+| `python -m sport_report.run_post_carrera --fecha YYYY-MM-DD --dry-run` | Imprime el informe post-carrera de esa carrera sin enviarlo |
 | `python -m sport_report.intervals.verificar` | Confirma la clave de intervals.icu (imprime su longitud, nunca la clave) |
 | `python -m sport_report.intervals.verificar --volcar-claves` | Paso del despliegue: qué nombres de campo trae la API |
 | `python -m sport_report.plan.migrar` | Reescribe los planes guardados al formato v2 |
@@ -228,6 +238,20 @@ sola**: la fase cambiaría sin que el atleta lo haya decidido, así que el bot p
 elegirla. Un archivo del formato anterior (una sola carrera) se lee como esa
 carrera principal y se reescribe en v2 la primera vez que se modifica.
 
+**El informe post-carrera llega el día siguiente, no el mismo día.** A las 10:00
+del día después la actividad ya suele estar subida y hay medición de bienestar
+de la mañana posterior. La carrera es la corrida más larga de ese día (la fuente
+no marca cuál fue la competencia; el calentamiento va aparte y es más corto). Si
+todavía no aparece, se reintenta hasta el tercer día y ese día se envía igual,
+diciendo que falta. La guarda es `data/reportes/carreras/<fecha>.json`, y se
+escribe solo si el mensaje llegó. Las señales de fatiga las decide el motor con
+umbrales (`config.PostCarrera`): segunda mitad ≥ 3 % más lenta, último cuarto
+≥ 3 % más lento que los tres primeros, deriva cardíaca sobre 5 %. No hay FC por
+vuelta en la base, así que la única señal cardíaca es la deriva de la actividad
+completa. El ciclo (solo para la principal) son las 16 semanas que terminan en
+la de la carrera, o desde la semana siguiente a la carrera principal anterior si
+fue más reciente; pico, promedio y afinamiento excluyen la semana de la carrera.
+
 **Una semana sin plan se resume por deporte.** El bloque `actividad_sin_plan` del
 JSON (solo existe sin plan) da km y minutos de running —con cuántas sesiones
 fueron en cinta—, minutos de ciclismo —con cuántas indoor—, sesiones de fuerza y
@@ -367,7 +391,7 @@ En un intérprete más viejo `pip` descarta en silencio las versiones que piden
 la Pi usa 1.x. Los tests pasan igual y estarías probando contra un major que
 en producción no existe. La CI corre en 3.11 y 3.12 justamente por esto.
 
-706 tests, ninguno toca la red: intervals.icu, Strava, Telegram y Claude se
+738 tests, ninguno toca la red: intervals.icu, Strava, Telegram y Claude se
 prueban con dobles (`httpx.MockTransport` para los clientes HTTP).
 `tests/test_regresiones.py` fija los bugs ya corregidos: cada test de ahí falla
 si se revierte su arreglo.
@@ -383,13 +407,14 @@ sport_report/
   intervals/        cliente, tabla de campos, ingesta y verificación (principal)
   strava/           OAuth con rotación, cliente, métricas, ingesta (respaldo)
   db/               esquema y repositorio SQLite
-  engine/           ACWR, Foster, adherencia, vueltas, fatiga, mensual -> JSON único
-  narrative/        llamada a Claude (semanal y mensual) + verificación de cifras
+  engine/           ACWR, Foster, adherencia, vueltas, fatiga, mensual, post-carrera -> JSON único
+  narrative/        llamada a Claude (semanal, mensual, post-carrera) + verificación de cifras
   telegram/         bot, comandos, formateo, envío de texto e imagen
   grafico.py        gráfico de volumen en PNG (matplotlib)
   backfill.py       carga histórica inicial, desde la fuente que se elija
   respaldo.py       copia de data/ con rotación
   run_weekly.py     orquestador (lo dispara el timer)
+  run_post_carrera.py  informe del día siguiente a una carrera (timer diario)
   diagnostico.py    chequeo de salud
 deploy/             instalar.sh, unidades systemd y los cinco runbooks
 .github/workflows/  CI: la suite en Python 3.11 y 3.12

@@ -446,6 +446,11 @@ def verificar_atribucion(
     problemas: list[str] = []
     vistos: set[tuple[int, str]] = set()
     for num in _RE_NUMERO.finditer(texto):
+        # Un trozo de un tiempo o un ritmo ("5:00/km", "1:45:32") no es el
+        # valor de ninguna metrica: en "a 5:00/km con FC 168" el 00 quedaba
+        # pegado a FC. `verificar_cifras` sigue exigiendo que exista.
+        if _es_parte_de_reloj(texto, num):
+            continue
         duenno = _metrica_mas_cercana(texto, num, apariciones)
         if duenno is None:
             continue
@@ -464,6 +469,14 @@ def verificar_atribucion(
             f"{'null' if esperado is None else esperado}"
         )
     return problemas
+
+
+def _es_parte_de_reloj(texto: str, num: re.Match[str]) -> bool:
+    """True si el numero va pegado a otro por ':' (no basta el ':' de "ACWR:1.3")."""
+    i, j = num.start(), num.end()
+    antes = i >= 2 and texto[i - 1] == ":" and texto[i - 2].isdigit()
+    despues = j + 1 < len(texto) and texto[j] == ":" and texto[j + 1].isdigit()
+    return antes or despues
 
 
 def _metrica_mas_cercana(

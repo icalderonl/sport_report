@@ -1,0 +1,19 @@
+# Todos los dias a las 10:00 hora local de la Pi. A esa hora la actividad de
+# la carrera de ayer ya suele estar subida y hay medicion de bienestar de la
+# manana siguiente. Los lunes no choca con el semanal (07:00).
+[Unit]
+Description=Revisa a diario si hay que enviar un informe post-carrera
+
+[Timer]
+OnCalendar=*-*-* 10:00:00
+
+# Si la Pi estaba apagada a las 10:00, corre apenas arranque. La ventana de
+# dias de run_post_carrera cubre ademas varios dias apagada.
+Persistent=true
+
+RandomizedDelaySec=5min
+
+Unit=sport-report-carrera.service
+
+[Install]
+WantedBy=timers.target

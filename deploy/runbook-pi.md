@@ -181,11 +181,12 @@ sudo -u sportreport ./.venv/bin/python -m sport_report.run_weekly --semana 2026-
 ```bash
 # Estado
 systemctl status sport-report-bot
-systemctl list-timers sport-report-weekly.timer
+systemctl list-timers sport-report-weekly.timer sport-report-carrera.timer
 
 # Logs de systemd
 journalctl -u sport-report-bot -f
 journalctl -u sport-report-weekly -n 100
+journalctl -u sport-report-carrera -n 100
 
 # Logs propios (rotan solos, 2 MB x 5 archivos)
 tail -f /opt/sport_report/logs/bot.log
@@ -193,6 +194,22 @@ tail -f /opt/sport_report/logs/run_weekly.log
 
 # Disparar el reporte a mano, sin esperar al lunes
 sudo systemctl start sport-report-weekly.service
+```
+
+### Informe post-carrera
+
+`sport-report-carrera.timer` corre todos los dias a las 10:00. Si una carrera
+declarada con `/carrera` fue en los ultimos 3 dias y su informe no existe
+(`data/reportes/carreras/<fecha>.json`), sincroniza, calcula y lo envia; si no,
+termina sin tocar la red. Normalmente llega el dia siguiente a la carrera. Si la
+actividad aun no se subio, espera al dia siguiente; el tercer dia lo envia igual
+avisando que falta.
+
+```bash
+# Ver el informe de una carrera sin enviarlo
+sudo -u sportreport ./.venv/bin/python -m sport_report.run_post_carrera --fecha 2026-11-15 --dry-run
+# Reenviarlo (ignora la ventana y la guarda)
+sudo -u sportreport ./.venv/bin/python -m sport_report.run_post_carrera --fecha 2026-11-15
 ```
 
 ### Respaldo de `data/`
@@ -248,7 +265,8 @@ todo de `sportreport`, reinicia, muestra el log y corre `diagnostico`. No
 dispara el reporte semanal. El script se copia junto con el tar y no se usa el de
 `/opt/sport_report/deploy/`, porque ese todavía es la versión anterior.
 
-Si cambiaron las dependencias, después:
+Si cambiaron las dependencias o hay unidades de systemd nuevas (por ejemplo
+`sport-report-carrera.timer`), después:
 
 ```bash
 sudo bash /opt/sport_report/deploy/instalar.sh
@@ -257,7 +275,8 @@ sudo systemctl restart sport-report-bot
 
 `instalar.sh` no pisa el `.env` existente ni `data/`. Se puede saltar cuando solo
 cambio codigo Python (la instalacion es `pip install -e .`, el venv apunta al
-fuente y basta el `restart`); hay que correrlo cuando cambian las dependencias.
+fuente y basta el `restart`); hay que correrlo cuando cambian las dependencias
+o las unidades de `deploy/`.
 
 **matplotlib** es la unica dependencia pesada: ~80 MB con numpy. En Raspberry Pi
 OS de 64 bits hay wheels para aarch64, asi que `pip` no compila nada. Si aun asi

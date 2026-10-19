@@ -93,7 +93,8 @@ else
 fi
 
 echo "==> Unidades de systemd"
-for u in sport-report-bot.service sport-report-weekly.service sport-report-weekly.timer; do
+for u in sport-report-bot.service sport-report-weekly.service sport-report-weekly.timer \
+         sport-report-carrera.service sport-report-carrera.timer; do
   sed -e "s#/opt/sport_report#$DESTINO#g" \
       -e "s#User=sportreport#User=$USUARIO#" \
       -e "s#Group=sportreport#Group=$USUARIO#" \
@@ -102,6 +103,7 @@ done
 systemctl daemon-reload
 systemctl enable --now sport-report-bot.service
 systemctl enable --now sport-report-weekly.timer
+systemctl enable --now sport-report-carrera.timer
 
 echo
 echo "Listo. Siguientes pasos:"
@@ -116,4 +118,4 @@ echo "  6. sudo systemctl restart sport-report-bot"
 echo
 echo "Opcional (respaldo): sudo -u $USUARIO $DESTINO/.venv/bin/python -m sport_report.strava.autorizar"
 echo
-systemctl list-timers sport-report-weekly.timer --no-pager || true
+systemctl list-timers sport-report-weekly.timer sport-report-carrera.timer --no-pager || true

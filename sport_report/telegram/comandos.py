@@ -51,6 +51,8 @@ AYUDA = """Comandos:
   queda como principal: define la fase del ciclo y la cuenta regresiva del plan.
   `/carrera` las lista, `/carrera principal <n>` cambia la principal y
   `/carrera borrar <n>` quita una (<n> es su numero en la lista, o su fecha).
+  El dia siguiente a cada carrera llega un informe post-carrera (y, si era
+  la principal, el cierre del ciclo).
 
 /plan — muestra el plan cargado y el estado de las sesiones de fuerza.
 /fuerza <dia> — marca una fuerza como cumplida (L M W J V S D o el nombre).
