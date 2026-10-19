@@ -1,6 +1,6 @@
 """Informe post-carrera: analisis de la carrera y cierre del ciclo.
 
-Se dispara el dia siguiente a una carrera declarada con /carrera (ver
+Se dispara el mismo dia de una carrera declarada con /carrera, a las 13:00 (ver
 `run_post_carrera`). Tres bloques, todos calculados aca:
 
 - **La carrera**: la corrida mas larga de ese dia. Tiempo, ritmo, FC, dinamica
@@ -311,7 +311,8 @@ def _bienestar(dias: Sequence[BienestarDia], fecha: date) -> dict[str, Any]:
     salida["motivo"] = "" if hay else "sin datos de bienestar esos dias (solo los da intervals.icu)"
     salida["nota"] = (
         "dato de cuerpo completo: 'dia_carrera' es la medicion de la manana de la "
-        "carrera (la noche previa), 'dia_siguiente' la de la manana despues"
+        "carrera (la noche previa), 'dia_siguiente' la de la manana despues; "
+        "null si el informe sale el mismo dia de la carrera"
     )
     return salida
 

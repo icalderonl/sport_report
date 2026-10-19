@@ -355,10 +355,11 @@ def test_una_fc_inventada_se_detecta(entorno):
 # --------------------------------------------------------------------------
 
 
-def test_pendientes_es_el_dia_siguiente_y_la_ventana():
+def test_pendientes_es_el_mismo_dia_y_la_ventana():
     c = [CARRERA, Carrera(fecha=FECHA + timedelta(days=30), nombre="otra")]
     nunca = lambda f: False  # noqa: E731
-    assert rpc.pendientes(c, hoy=FECHA, hecho=nunca) == []  # el mismo dia, no
+    assert rpc.pendientes(c, hoy=FECHA - timedelta(days=1), hecho=nunca) == []
+    assert rpc.pendientes(c, hoy=FECHA, hecho=nunca) == [CARRERA]  # el mismo dia
     assert rpc.pendientes(c, hoy=FECHA + timedelta(days=1), hecho=nunca) == [CARRERA]
     assert rpc.pendientes(c, hoy=FECHA + timedelta(days=3), hecho=nunca) == [CARRERA]
     assert rpc.pendientes(c, hoy=FECHA + timedelta(days=4), hecho=nunca) == []
@@ -394,11 +395,12 @@ def test_sin_actividad_espera_hasta_el_ultimo_dia(entorno):
     repo, store = entorno
     enviados: list[str] = []
     enviar = lambda m: enviados.append(m) or True  # noqa: E731
-    r = rpc.ejecutar(
-        CARRERA, True, repo, store, narrador=None, enviador=enviar,
-        hoy=FECHA + timedelta(days=1),
-    )
-    assert r.estado == rpc.ESPERANDO and enviados == []
+    for dias in (0, 1):  # el mismo dia y el reintento del dia siguiente
+        r = rpc.ejecutar(
+            CARRERA, True, repo, store, narrador=None, enviador=enviar,
+            hoy=FECHA + timedelta(days=dias),
+        )
+        assert r.estado == rpc.ESPERANDO and enviados == []
     assert not m_post.ruta_informe(FECHA).exists()
 
     r = rpc.ejecutar(

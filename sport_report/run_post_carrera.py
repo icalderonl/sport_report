@@ -2,11 +2,11 @@
 
     python -m sport_report.run_post_carrera [opciones]
 
-Cada dia mira las carreras declaradas con /carrera. Si alguna fue en los
-ultimos `POST_CARRERA.dias_ventana` dias y su informe no existe, sincroniza,
-calcula, narra y envia. El informe llega el dia siguiente a la carrera; los
-dias extra de la ventana cubren una actividad que se sincronizo tarde o una Pi
-apagada.
+Cada dia a las 13:00 mira las carreras declaradas con /carrera. Si alguna es
+de hoy o de los ultimos `POST_CARRERA.dias_ventana` dias y su informe no
+existe, sincroniza, calcula, narra y envia. El primer intento es el mismo dia
+de la carrera; si la actividad todavia no se subio, se reintenta al dia
+siguiente, y los dias extra de la ventana cubren una Pi apagada.
 
 Guarda idempotente: el JSON en `data/reportes/carreras/<fecha>.json`. Solo se
 escribe cuando el informe llego, asi que un envio fallido se reintenta al dia
@@ -61,16 +61,14 @@ def pendientes(
     hecho: Callable[[date], bool] | None = None,
     cfg: PostCarrera = POST_CARRERA,
 ) -> list[Carrera]:
-    """Carreras de los ultimos dias sin informe, de la mas vieja a la mas nueva.
-
-    La del dia de hoy no entra: el informe es del dia siguiente, cuando la
-    actividad ya se subio y hay medicion de bienestar de la manana despues.
+    """Carreras de hoy y de los ultimos dias sin informe, de la mas vieja a la
+    mas nueva. Una carrera futura nunca entra.
     """
     hoy = hoy or hoy_local()
     ya_hecho = hecho or (lambda f: m_post.ruta_informe(f).exists())
     desde = hoy - timedelta(days=cfg.dias_ventana)
     return sorted(
-        (c for c in carreras if desde <= c.fecha < hoy and not ya_hecho(c.fecha)),
+        (c for c in carreras if desde <= c.fecha <= hoy and not ya_hecho(c.fecha)),
         key=lambda c: c.fecha,
     )
 

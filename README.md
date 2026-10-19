@@ -13,8 +13,8 @@ calculadas**. Una vez al mes añade el reporte mensual, **solo de carrera**,
 narrado por un modelo más capaz y partido en dos mensajes: **actividad**
 (volumen, adherencia, largos de la semana y comparativa de calidad
 tempo/series/fartlek, siempre) y **fatiga y dinámica** (solo si hubo una
-variación relevante contra el mes anterior). Y el **día siguiente a una
-carrera** declarada llega el **informe post-carrera**: tiempo, ritmo, FC,
+variación relevante contra el mes anterior). Y el **mismo día de una
+carrera** declarada (13:00; si la actividad no está, al día siguiente) llega el **informe post-carrera**: tiempo, ritmo, FC,
 parciales por mitades y cuartos, señales de fatiga y, si era la principal, el
 cierre del ciclo (volumen, pico, afinamiento, adherencia) comparado con el
 ciclo anterior.
@@ -44,7 +44,7 @@ data/carrera.json      (las carreras objetivo y cual es la principal)
   una vez al mes, además:  agregados del mes (solo carrera)
                              -> Claude (modelo mayor) -> un mensaje narrado
 
-[timer diario 10:00] -> ¿carrera ayer (o hasta 3 días) sin informe?
+[timer diario 13:00] -> ¿carrera hoy (o hasta 3 días atrás) sin informe?
                           no -> termina sin tocar la red
                           sí -> sincroniza -> análisis + ciclo -> Claude -> Telegram
 ```
@@ -238,11 +238,12 @@ sola**: la fase cambiaría sin que el atleta lo haya decidido, así que el bot p
 elegirla. Un archivo del formato anterior (una sola carrera) se lee como esa
 carrera principal y se reescribe en v2 la primera vez que se modifica.
 
-**El informe post-carrera llega el día siguiente, no el mismo día.** A las 10:00
-del día después la actividad ya suele estar subida y hay medición de bienestar
-de la mañana posterior. La carrera es la corrida más larga de ese día (la fuente
-no marca cuál fue la competencia; el calentamiento va aparte y es más corto). Si
-todavía no aparece, se reintenta hasta el tercer día y ese día se envía igual,
+**El informe post-carrera se intenta el mismo día, a las 13:00.** Una carrera de
+la mañana ya terminó y se subió; si la actividad no aparece, se reintenta al día
+siguiente a la misma hora (y entonces trae también el bienestar de la mañana
+posterior). La carrera es la corrida más larga de ese día (la fuente
+no marca cuál fue la competencia; el calentamiento va aparte y es más corto). Los
+reintentos siguen hasta el tercer día después y ese día se envía igual,
 diciendo que falta. La guarda es `data/reportes/carreras/<fecha>.json`, y se
 escribe solo si el mensaje llegó. Las señales de fatiga las decide el motor con
 umbrales (`config.PostCarrera`): segunda mitad ≥ 3 % más lenta, último cuarto
@@ -414,7 +415,7 @@ sport_report/
   backfill.py       carga histórica inicial, desde la fuente que se elija
   respaldo.py       copia de data/ con rotación
   run_weekly.py     orquestador (lo dispara el timer)
-  run_post_carrera.py  informe del día siguiente a una carrera (timer diario)
+  run_post_carrera.py  informe post-carrera (timer diario 13:00)
   diagnostico.py    chequeo de salud
 deploy/             instalar.sh, unidades systemd y los cinco runbooks
 .github/workflows/  CI: la suite en Python 3.11 y 3.12

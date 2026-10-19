@@ -133,7 +133,7 @@ class Carrera:
 
 @dataclass(frozen=True)
 class PostCarrera:
-    """Informe del dia siguiente a una carrera (`run_post_carrera`).
+    """Informe post-carrera (`run_post_carrera`): el mismo dia a las 13:00.
 
     Los umbrales de fatiga son convenciones de lectura de parciales, no
     verdades fisiologicas, igual que el resto de esta configuracion.
@@ -143,8 +143,8 @@ class PostCarrera:
     # otra carrera principal reportada dentro de esa ventana, el ciclo empieza
     # la semana siguiente a ella.
     semanas_ciclo: int = 16
-    # Dias despues de la carrera en que se sigue intentando el informe si la
-    # actividad todavia no se sincronizo. Pasado el ultimo, se envia sin ella.
+    # Dias despues de la carrera en que se sigue reintentando (uno por dia) si
+    # la actividad todavia no se sincronizo. El ultimo se envia sin ella.
     dias_ventana: int = 3
     # Segunda mitad mas lenta que la primera en al menos este %: senal de fatiga.
     split_positivo_pct: float = 3.0

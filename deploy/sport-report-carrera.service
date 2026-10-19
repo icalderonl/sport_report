@@ -1,7 +1,7 @@
 # Informe post-carrera. Lo dispara sport-report-carrera.timer cada dia; si no
 # hay una carrera de los ultimos dias sin informe, termina sin tocar la red.
 [Unit]
-Description=Informe post-carrera (dia siguiente a la carrera)
+Description=Informe post-carrera (el dia de la carrera, 13:00)
 Documentation=file:///opt/sport_report/deploy/runbook-pi.md
 After=network-online.target
 Wants=network-online.target
