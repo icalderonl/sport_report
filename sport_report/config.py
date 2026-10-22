@@ -222,6 +222,13 @@ STRAVA = "strava"
 # intervals.icu nunca respalda a Strava (no hay respaldo del respaldo).
 FUENTE_PRINCIPAL = os.getenv("FUENTE_PRINCIPAL", INTERVALS)
 
+# --- Garmin Connect Personal API: en evaluacion, todavia no se usa ---
+# Clave personal: Garmin Connect -> Ajustes -> Personal API. A diferencia de
+# intervals.icu, VENCE (30 dias a un ano) y se renueva a mano.
+# `python -m sport_report.garmin.verificar` comprueba que sirve.
+GARMIN_API_KEY = os.getenv("GARMIN_API_KEY", "")
+GARMIN_BASE = os.getenv("GARMIN_BASE", "https://personal.connectapi.garmin.com")
+
 # --- Strava: solo respaldo (fase 2) ---
 STRAVA_CLIENT_ID = os.getenv("STRAVA_CLIENT_ID", "")
 STRAVA_CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET", "")
