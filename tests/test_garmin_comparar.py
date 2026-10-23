@@ -65,7 +65,7 @@ def test_bienestar_por_fecha():
         [{"calendarDate": "2026-10-21", "heartRate": {"restingValue": 57},
           "bodyBattery": {"maxValue": 75}}],
     )
-    assert b_g["2026-10-21"] == {
+    assert {k: v for k, v in b_g["2026-10-21"].items() if not k.startswith("_")} == {
         "hrv": 43, "hr_reposo": 57, "sueno_h": 7.75, "sueno_score": 81, "body_battery": 75,
     }
     filas = c.comparar_bienestar(
@@ -118,3 +118,16 @@ def test_comparar_de_punta_a_punta(capsys):
     assert "emparejadas=1" in salida
     assert "10/10 comparaciones dentro de tolerancia" in salida
     assert "Garmin RUNNING" in salida
+
+
+def test_diferencia_de_sueno_muestra_el_desglose_de_garmin():
+    b_g = c.bienestar_garmin(
+        {},
+        [{"calendarDate": "2026-09-28", "sleepTimeSeconds": 21060, "napTimeSeconds": 4320,
+          "awakeSleepSeconds": 600}],
+        [],
+    )
+    filas = c.comparar_bienestar([{"id": "2026-09-28", "sleepSecs": 25380}], b_g)["2026-09-28"]
+    sueno = next(f for f in filas if f.metrica == "sueno_h")
+    assert sueno.estado == c.DIFERENCIA
+    assert "siesta 1.2" in sueno.nota and "despierto 0.17" in sueno.nota

@@ -186,8 +186,25 @@ def bienestar_garmin(
             "sueno_h": round(segundos / 3600.0, 2) if segundos else None,
             "sueno_score": _num(((s.get("sleepScores") or {}).get("overall") or {}).get("value")),
             "body_battery": _num((d.get("bodyBattery") or {}).get("maxValue")),
+            # Para explicar una diferencia de horas de sueno: intervals.icu
+            # podria estar sumando siestas o tiempo despierto.
+            "_siesta_h": _horas(s.get("napTimeSeconds")),
+            "_despierto_h": _horas(s.get("awakeSleepSeconds")),
+            "_sin_medir_h": _horas(s.get("unmeasurableSleepSeconds")),
         }
     return salida
+
+
+def _horas(segundos: Any) -> float | None:
+    n = _num(segundos)
+    return round(n / 3600.0, 2) if n is not None else None
+
+
+def desglose_sueno(g: dict[str, float | None]) -> str:
+    """Partes del sueno de Garmin que no entran en `sueno_h`."""
+    partes = [f"siesta {g.get('_siesta_h')}", f"despierto {g.get('_despierto_h')}",
+              f"sin medir {g.get('_sin_medir_h')}"]
+    return "Garmin aparte: " + ", ".join(partes) + " h"
 
 
 TOLERANCIAS_BIENESTAR = {
@@ -218,10 +235,13 @@ def comparar_bienestar(
             "sueno_score": campos.numero(crudo, "sueno_score"),
             "body_battery": campos.numero(crudo, "body_battery"),
         }
-        salida[fecha] = [
-            _fila(m, valores_i[m], g.get(m), tol, "referencial" if m == "body_battery" else "")
-            for m, tol in TOLERANCIAS_BIENESTAR.items()
-        ]
+        filas = []
+        for m, tol in TOLERANCIAS_BIENESTAR.items():
+            f = _fila(m, valores_i[m], g.get(m), tol, "referencial" if m == "body_battery" else "")
+            if m == "sueno_h" and f.estado == DIFERENCIA:
+                f = Fila(f.metrica, f.intervals, f.garmin, f.estado, desglose_sueno(g))
+            filas.append(f)
+        salida[fecha] = filas
     return salida
 
 
