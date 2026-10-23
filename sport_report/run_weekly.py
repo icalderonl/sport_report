@@ -8,8 +8,8 @@ La ingesta va contra intervals.icu y cae al respaldo de Garmin solo si esa
 falla; el selector vive en `sport_report/fuentes`.
 
 Politica de fallos (spec 10): el objetivo es que SIEMPRE llegue un mensaje.
-  - Si intervals.icu falla, se intenta Strava y la semana queda degradada,
-    dicho explicitamente en el reporte.
+  - Si intervals.icu falla, se intenta Garmin y la semana sale por el
+    respaldo, dicho explicitamente en el reporte.
   - Si las dos fallan, se reporta con lo que ya hay en la base, avisando.
   - Si Claude falla, se reporta igual sin la parte narrativa.
   - Solo un fallo del motor de calculo o del envio hace fracasar la corrida.
