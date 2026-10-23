@@ -52,14 +52,15 @@ class GarminClient:
         try:
             r = self.http.post(
                 f"{self.base}{RUTA_TOKEN}",
-                headers={"Authorization": f"ApiKey {clave(self._clave)}"},
+                headers={"Accept": "*/*", "Authorization": f"ApiKey {clave(self._clave)}"},
             )
         except httpx.HTTPError as exc:
             raise GarminError(f"fallo de red pidiendo el token: {exc}") from exc
         if r.status_code in (401, 403):
             raise GarminAuthError(
                 f"{r.status_code} al pedir el token: Garmin rechazo la clave. "
-                "Puede haber vencido o estar mal copiada en GARMIN_API_KEY"
+                "Puede haber vencido o estar mal copiada en GARMIN_API_KEY. "
+                f"Respuesta: {r.text[:200]!r}"
             )
         if r.status_code >= 400:
             raise GarminError(f"{r.status_code} al pedir el token: {r.text[:200]}")
