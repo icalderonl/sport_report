@@ -571,7 +571,7 @@ def construir(
         avisos.append(actividad["motivo"])
     if s is not None and s.fuente == config.STRAVA:
         avisos.append(
-            "la carrera viene del respaldo (Strava): sin GCT, oscilacion ni ratio vertical"
+            "la carrera viene de Strava: sin GCT, oscilacion ni ratio vertical"
         )
 
     datos_ciclo = None

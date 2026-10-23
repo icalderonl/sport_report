@@ -1,7 +1,7 @@
 """Errores del cliente de intervals.icu.
 
 Todos heredan de `IntervalsError` porque es lo que el selector de fuentes
-atrapa para caer al respaldo de Strava: cualquier fallo de esta fuente —red,
+atrapa para caer al respaldo de Garmin: cualquier fallo de esta fuente —red,
 credencial, timeout, 5xx— tiene la misma consecuencia.
 """
 from __future__ import annotations

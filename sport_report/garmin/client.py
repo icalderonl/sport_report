@@ -119,19 +119,28 @@ class GarminClient:
         return self._get("/userprofile-service/userprofile/settings") or {}
 
     def actividades(self, desde: date, hasta: date, limite: int = 99) -> list[dict[str, Any]]:
-        """Actividades con inicio local entre `desde` y `hasta`, ambos inclusive."""
-        return (
-            self._get(
-                "/activitylist-service/activities/search/activities",
-                {
-                    "startDate": desde.isoformat(),
-                    "endDate": hasta.isoformat(),
-                    "limit": limite,
-                    "sortOrder": "asc",
-                },
+        """Actividades con inicio local entre `desde` y `hasta`, ambos inclusive.
+
+        Pagina con `start`: un backfill largo puede pasar de `limite`.
+        """
+        salida: list[dict[str, Any]] = []
+        while True:
+            pagina = (
+                self._get(
+                    "/activitylist-service/activities/search/activities",
+                    {
+                        "startDate": desde.isoformat(),
+                        "endDate": hasta.isoformat(),
+                        "start": len(salida),
+                        "limit": limite,
+                        "sortOrder": "asc",
+                    },
+                )
+                or []
             )
-            or []
-        )
+            salida.extend(pagina)
+            if len(pagina) < limite:
+                return salida
 
     def actividad(self, actividad_id: Any) -> dict[str, Any]:
         return self._get(f"/activity-service/activity/{actividad_id}") or {}

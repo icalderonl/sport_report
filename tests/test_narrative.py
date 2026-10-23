@@ -491,7 +491,7 @@ def test_el_prompt_obliga_a_declarar_la_semana_de_respaldo():
     from sport_report.narrative.claude import SISTEMA
 
     assert '"fuente"."fallback"' in SISTEMA
-    assert "INCOMPLETA" in SISTEMA
+    assert "Nunca la presentes como una" in SISTEMA
     assert "no_disponibles" in SISTEMA
 
 

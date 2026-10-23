@@ -81,7 +81,7 @@ def _dinamica(
     unidad: str,
     fuente: dict[str, Any],
 ) -> Tendencia:
-    """Dinamica avanzada, que SOLO da intervals.icu.
+    """Dinamica avanzada, que dan intervals.icu y Garmin, no Strava.
 
     Cuando no hay valor, el motivo distingue los tres casos que se arreglan de
     forma distinta: la semana vino del respaldo, el reloj no lo midio, o no hay
@@ -93,7 +93,7 @@ def _dinamica(
         return replace(t, unidad=unidad, disponible=True)
 
     corridas = sum(1 for s in actual if s.es_run)
-    if fuente.get("fallback"):
+    if fuente.get("fallback") and fuente.get("no_disponibles"):
         motivo = (
             f"la semana se ingirio desde {fuente.get('usada')} (respaldo), que no "
             "expone dinamica de carrera"
@@ -299,20 +299,30 @@ def construir(
         descanso_roto=tuple(
             d.dia for d in r_adh.dias if d.estado == m_adh.DESCANSO_ROTO
         ),
-        fuente_degradada=bool(fuente.get("fallback")),
+        # Solo cuenta como sin bienestar la fuente que no lo da (Strava): el
+        # respaldo de Garmin si lo trae.
+        fuente_degradada="fatiga_descanso" in fuente.get("no_disponibles", ()),
     )
 
     alertas = [a for a in (r_acwr.alerta, r_foster.alerta, r_deriva["alerta"]) if a]
     alertas.extend(r_fatiga.alertas)
     if fuente["fallback"]:
         # Al frente: es lo primero que hay que saber de esta semana. Nombra lo
-        # que falta en vez de dejarlo como un hueco silencioso.
+        # que falta o cambia en vez de dejarlo como un hueco silencioso.
+        from ..fuentes import AVISO_RESPALDO
+
         avisos.insert(
             0,
-            f"esta semana los datos vienen de {fuente['usada']} (respaldo): no hay "
-            "GCT, oscilacion vertical, ratio vertical ni bienestar (HRV, sueno, "
-            "sleep score, Body Battery, readiness). La semana no esta completa",
+            AVISO_RESPALDO.get(
+                fuente["usada"],
+                f"esta semana los datos vienen de {fuente['usada']} (respaldo)",
+            ),
         )
+    from ..fuentes import aviso_vencimiento_garmin
+
+    vence = aviso_vencimiento_garmin(ahora_local().date())
+    if vence:
+        avisos.append(vence)
 
     return {
         "version": VERSION_REPORTE,
@@ -358,8 +368,8 @@ def construir(
         "monotony": r_foster.to_json(),
         "deriva_cardiaca": r_deriva,
         "cadencia": _tendencia(sesiones, sesiones_previas, "cadencia_spm").to_json(),
-        # Las tres que solo da intervals.icu. Con el respaldo activo salen en
-        # null con `disponible: false` y el motivo, nunca en cero.
+        # Las tres que Strava no da. Con ese respaldo salen en null con
+        # `disponible: false` y el motivo, nunca en cero.
         "gct": _dinamica(sesiones, sesiones_previas, "gct_ms", "ms", fuente).to_json(),
         "oscilacion_vertical": _dinamica(
             sesiones, sesiones_previas, "oscilacion_vertical_cm", "cm", fuente

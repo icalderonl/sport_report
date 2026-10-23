@@ -7,9 +7,11 @@ Necesitas las credenciales de los otros runbooks:
 - [runbook-intervals.md](runbook-intervals.md) — API key de la **fuente
   principal** (obligatorio)
 - [runbook-telegram.md](runbook-telegram.md) — bot y chat_id (obligatorio)
-- [runbook-strava.md](runbook-strava.md) — app OAuth del **respaldo** (opcional:
-  sin esto el sistema funciona, pero si intervals.icu cae esa semana no se
-  reporta nada nuevo)
+- Clave de la **API Personal de Garmin**, el **respaldo** (opcional: sin ella el
+  sistema funciona, pero si intervals.icu cae esa semana no se reporta nada
+  nuevo). Ver "Respaldo de Garmin" abajo.
+- [runbook-strava.md](runbook-strava.md) — app OAuth de Strava (opcional; ya no
+  es respaldo, solo se usa forzándola)
 - [runbook-anthropic.md](runbook-anthropic.md) — API key (opcional: sin esto el
   reporte llega igual, sin el párrafo de resumen)
 
@@ -88,7 +90,26 @@ La primera vez, además, hay que cerrar la tabla de nombres de campo (ver
 sudo -u sportreport /opt/sport_report/.venv/bin/python -m sport_report.intervals.verificar --volcar-claves
 ```
 
-### Respaldo de Strava (opcional)
+### Respaldo de Garmin (opcional)
+
+La clave se crea en Garmin Connect (Configuración > Personal API token) y se
+muestra una sola vez. Se anotan en el `.env` de la Pi la clave y su fecha de
+vencimiento, porque la API no la informa:
+
+```bash
+GARMIN_API_KEY=...
+GARMIN_API_KEY_VENCE=AAAA-MM-DD
+```
+
+```bash
+sudo -u sportreport /opt/sport_report/.venv/bin/python -m sport_report.garmin.verificar 30
+sudo -u sportreport /opt/sport_report/.venv/bin/python -m sport_report.garmin.comparar 31
+```
+
+`diagnostico` avisa 14 días antes del vencimiento y el reporte semanal 7. Al
+renovarla se reemplazan las dos líneas.
+
+### Strava (opcional, ya no es respaldo)
 
 ```bash
 sudo -u sportreport /opt/sport_report/.venv/bin/python -m sport_report.strava.autorizar
@@ -165,7 +186,7 @@ sudo -u sportreport ./.venv/bin/python -m sport_report.run_weekly --dry-run
 ```
 
 Imprime el mensaje exacto que mandaría. Con `--sin-ingesta` no consulta ninguna
-fuente, con `--sin-narrativa` no llama a Claude, con `--fuente strava` fuerza el
+fuente, con `--sin-narrativa` no llama a Claude, con `--fuente garmin` fuerza el
 respaldo y con `--sin-mensual` salta el reporte mensual.
 
 Para forzar el envío real de una semana concreta:

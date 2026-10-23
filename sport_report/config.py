@@ -216,20 +216,28 @@ INTERVALS_ATHLETE_ID = os.getenv("INTERVALS_ATHLETE_ID", "0")
 INTERVALS_BASE = os.getenv("INTERVALS_BASE", "https://intervals.icu/api/v1")
 
 INTERVALS = "intervals"
+GARMIN = "garmin"
 STRAVA = "strava"
-# Cual fuente se intenta primero. Con 'intervals', Strava queda como respaldo y
-# solo se usa si intervals.icu falla. Con 'strava' forzado NO hay respaldo:
-# intervals.icu nunca respalda a Strava (no hay respaldo del respaldo).
+# Cual fuente se intenta primero. Con 'intervals', Garmin queda como respaldo y
+# solo se usa si intervals.icu falla. Con 'garmin' o 'strava' forzados NO hay
+# respaldo (no hay respaldo del respaldo). Strava ya no entra a la cadena: solo
+# se usa si se fuerza.
 FUENTE_PRINCIPAL = os.getenv("FUENTE_PRINCIPAL", INTERVALS)
 
-# --- Garmin Connect Personal API: en evaluacion, todavia no se usa ---
+# --- Garmin Connect Personal API: el respaldo de intervals.icu ---
 # Clave personal: Garmin Connect -> Ajustes -> Personal API. A diferencia de
 # intervals.icu, VENCE (30 dias a un ano) y se renueva a mano.
 # `python -m sport_report.garmin.verificar` comprueba que sirve.
 GARMIN_API_KEY = os.getenv("GARMIN_API_KEY", "")
 GARMIN_BASE = os.getenv("GARMIN_BASE", "https://personal.connectapi.garmin.com")
+# La API no informa cuando vence la clave: se anota a mano (AAAA-MM-DD) al
+# crearla. Sin esto el respaldo puede morir en silencio justo cuando hace falta.
+GARMIN_API_KEY_VENCE = os.getenv("GARMIN_API_KEY_VENCE", "")
+# Con cuantos dias de anticipacion avisan `diagnostico` y el reporte semanal.
+GARMIN_AVISO_DIAS_DIAGNOSTICO = 14
+GARMIN_AVISO_DIAS_REPORTE = 7
 
-# --- Strava: solo respaldo (fase 2) ---
+# --- Strava: ya no es respaldo; solo se usa si se fuerza FUENTE_PRINCIPAL ---
 STRAVA_CLIENT_ID = os.getenv("STRAVA_CLIENT_ID", "")
 STRAVA_CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET", "")
 # Solo bootstrap de la primera corrida: despues manda data/tokens.json.
@@ -258,4 +266,4 @@ TIPOS_INDOOR = ("VirtualRun", "VirtualRide")
 # Origenes de zonas de HR que se consideran datos del atleta. Cualquier otro
 # (hoy solo 'fallback') implica carga ponderada con peso plano, que el reporte
 # debe marcar como imprecisa.
-ORIGENES_ZONAS_CONFIABLES = ("intervals", "strava")
+ORIGENES_ZONAS_CONFIABLES = ("intervals", "garmin", "strava")

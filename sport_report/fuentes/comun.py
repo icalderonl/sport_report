@@ -36,7 +36,7 @@ class ResumenIngesta:
     # el reporte para marcar la semana degradada (spec 4bis).
     fuente: str = ""
     fallback: bool = False
-    # Dias de bienestar persistidos. Solo intervals.icu los provee.
+    # Dias de bienestar persistidos (intervals.icu, o Garmin como respaldo).
     bienestar_dias: int = 0
     # Corridas sin dinamica avanzada (GCT, oscilacion y ratio vertical).
     sin_dinamica: int = 0

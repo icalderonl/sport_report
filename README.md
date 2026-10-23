@@ -19,7 +19,7 @@ parciales por mitades y cuartos, señales de fatiga y, si era la principal, el
 cierre del ciclo (volumen, pico, afinamiento, adherencia) comparado con el
 ciclo anterior.
 
-Fuente de datos: **intervals.icu**, con **Strava como respaldo** si esa falla.
+Fuente de datos: **intervals.icu**, con **Garmin (API Personal) como respaldo** si esa falla.
 El plan se carga a mano por Telegram. Una semana sin plan se reporta igual:
 un resumen por deporte (km de running, minutos de ciclismo, sesiones de fuerza).
 
@@ -34,7 +34,7 @@ data/carrera.json      (las carreras objetivo y cual es la principal)
       |
       v
 [timer lunes 07:00] -> intervals.icu ---> SQLite -> Motor de cálculo
-                        (respaldo: Strava)              |
+                        (respaldo: Garmin)              |
                                           +-------------+-------------+
                                           v                           v
                               Claude API (narrativa)        grafico.py (PNG)
@@ -59,7 +59,7 @@ informe post-carrera cuando corresponde.
 Cinco runbooks, en este orden:
 
 1. [deploy/runbook-intervals.md](deploy/runbook-intervals.md) — API key y verificación de campos
-2. [deploy/runbook-strava.md](deploy/runbook-strava.md) — app OAuth del respaldo (opcional)
+2. [deploy/runbook-strava.md](deploy/runbook-strava.md) — app OAuth de Strava (opcional; ya no es respaldo)
 3. [deploy/runbook-telegram.md](deploy/runbook-telegram.md) — bot y chat_id
 4. [deploy/runbook-anthropic.md](deploy/runbook-anthropic.md) — API key (opcional)
 5. [deploy/runbook-pi.md](deploy/runbook-pi.md) — instalación y operación
@@ -99,7 +99,9 @@ y su ausencia no impide que el reporte llegue.
 | `python -m sport_report.intervals.verificar` | Confirma la clave de intervals.icu (imprime su longitud, nunca la clave) |
 | `python -m sport_report.intervals.verificar --volcar-claves` | Paso del despliegue: qué nombres de campo trae la API |
 | `python -m sport_report.plan.migrar` | Reescribe los planes guardados al formato v2 |
-| `python -m sport_report.strava.autorizar` | Flujo OAuth del respaldo (una sola vez) |
+| `python -m sport_report.garmin.verificar [dias]` | Confirma la clave de Garmin y qué campos trae |
+| `python -m sport_report.garmin.comparar [dias]` | Compara Garmin contra intervals.icu, corrida por corrida |
+| `python -m sport_report.strava.autorizar` | Flujo OAuth de Strava (una sola vez) |
 | `python -m sport_report.strava.verificar` | Confirma la conexión con Strava |
 | `python -m sport_report.backfill 120` | Historial inicial: 28 días para ACWR, 112 para el gráfico |
 | `python -m sport_report.narrative.probar` | Prueba la capa narrativa |
@@ -107,7 +109,7 @@ y su ausencia no impide que el reporte llegue.
 | `python -m sport_report.respaldo [destino]` | Copia `data/` (base, tokens, planes) |
 
 `run_weekly` acepta además `--semana YYYY-MM-DD` para reprocesar una semana
-concreta, `--fuente intervals|strava` para forzar la fuente, `--sin-ingesta`
+concreta, `--fuente intervals|garmin|strava` para forzar la fuente, `--sin-ingesta`
 para no consultar ninguna, `--sin-narrativa` para no llamar a Claude,
 `--mensual` / `--sin-mensual` para forzar o saltar el reporte mensual, y
 `--sin-respaldo` para no copiar `data/` al terminar.
@@ -171,17 +173,24 @@ cualquier cosa que dijera sobre la tendencia sería una conclusión derivada, y 
 verificación posterior solo sabe comprobar números. Si matplotlib falta o falla,
 el reporte llega igual sin imagen y la corrida queda en `parcial`.
 
-**intervals.icu es la fuente; Strava es el respaldo.** El selector
-(`sport_report/fuentes/`) intenta intervals.icu y solo usa Strava si esa falla.
-No hay respaldo del respaldo. Una semana que sale por el respaldo **no se
+**intervals.icu es la fuente; Garmin es el respaldo.** El selector
+(`sport_report/fuentes/`) intenta intervals.icu y solo usa Garmin si esa falla.
+No hay respaldo del respaldo. Garmin lee el mismo reloj, así que trae dinámica
+y bienestar con las mismas cifras (comprobado con `garmin.comparar`); lo que
+cambia es el tiempo en movimiento (el del reloj, 2-3 % menor que el de
+intervals.icu) y que no hay readiness. Garmin nunca pisa un día de bienestar
+que ya guardó intervals.icu. La clave de Garmin vence (30 a 365 días) y la API
+no informa cuándo: se anota en `GARMIN_API_KEY_VENCE` y el diagnóstico avisa
+14 días antes, el reporte 7. Strava ya no está en la cadena; solo se usa
+forzándola. Una semana que sale por el respaldo **no se
 disfraza de semana normal**: queda registrada en `fuentes_semana`, el JSON trae
 un bloque `fuente` con la lista de lo que falta, el aviso va al frente del
 mensaje y la corrida queda en `parcial`.
 
-**Lo que solo da intervals.icu queda en `null` cuando su API falla.** GCT,
-oscilación vertical, ratio vertical, HRV, HR de reposo, sueño, sleep score,
-Body Battery y Training Readiness se obtienen exclusivamente de ahí. Si no
-llegan, se reportan como `disponible: false` con el motivo — y el motivo
+**Lo que una fuente no da queda en `null`.** GCT, oscilación vertical, ratio
+vertical, HRV, HR de reposo, sueño, sleep score, Body Battery y Training
+Readiness salen de intervals.icu (o de Garmin como respaldo, sin readiness).
+Si no llegan, se reportan como `disponible: false` con el motivo — y el motivo
 distingue los tres casos que se arreglan distinto: la semana vino del respaldo,
 el reloj no lo midió, o el campo no existe en la API. **Nunca un cero**: un GCT
 de 0 ms diría que el pie no tocó el suelo, y un sueño de 0 h que no se durmió.
@@ -394,8 +403,8 @@ se contaría dos veces.
 - **RPE**: evaluado y descartado.
 
 GCT, oscilación vertical y ratio vertical **ya no están fuera de alcance**:
-intervals.icu los expone. Con el respaldo de Strava activo quedan en `null` esa
-semana, dicho explícitamente.
+intervals.icu y Garmin los exponen. Una semana forzada a Strava los deja en
+`null`, dicho explícitamente.
 
 Ver la sección 4 y 11 de la spec original antes de reabrir cualquiera de estas.
 
@@ -412,7 +421,7 @@ En un intérprete más viejo `pip` descarta en silencio las versiones que piden
 la Pi usa 1.x. Los tests pasan igual y estarías probando contra un major que
 en producción no existe. La CI corre en 3.11 y 3.12 justamente por esto.
 
-769 tests, ninguno toca la red: intervals.icu, Strava, Telegram y Claude se
+803 tests, ninguno toca la red: intervals.icu, Garmin, Strava, Telegram y Claude se
 prueban con dobles (`httpx.MockTransport` para los clientes HTTP).
 `tests/test_regresiones.py` fija los bugs ya corregidos: cada test de ahí falla
 si se revierte su arreglo.

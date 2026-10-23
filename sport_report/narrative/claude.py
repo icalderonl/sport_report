@@ -76,8 +76,9 @@ Como leer el JSON:
 - Un bloque con "disponible": false NO tiene dato. Su "motivo" dice por que. No
   lo presentes como un cero ni te lo saltes en silencio si venia al caso.
 - Si "fuente"."fallback" es true, la semana se ingirio desde la fuente de
-  respaldo y esta INCOMPLETA: dilo explicitamente y nombra lo que falta, que
-  esta en "fuente"."no_disponibles". Nunca la presentes como una semana normal.
+  respaldo: dilo explicitamente y nombra lo que falta o cambia, que esta en
+  "fuente"."no_disponibles" y en el primer aviso. Nunca la presentes como una
+  semana normal.
 - NUNCA combines el bienestar (HRV, HR de reposo, sueno, sleep score, Body
   Battery, readiness) y la carga (ACWR, Monotony, Strain) en un solo indicador,
   puntaje o juicio unico. Reportalos por separado; si dices algo de la relacion

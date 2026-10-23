@@ -1,6 +1,6 @@
 """Carga historica inicial, desde la fuente que se elija.
 
-    python -m sport_report.backfill [dias] [--fuente intervals|strava]
+    python -m sport_report.backfill [dias] [--fuente intervals|garmin|strava]
 
 ACWR necesita 28 dias de historico para ser confiable. Sin esto, las primeras
 cuatro semanas del sistema reportarian ACWR/Monotony como no confiables aunque
@@ -49,7 +49,7 @@ def _args(argv: list[str] | None):
     )
     p.add_argument(
         "--fuente",
-        choices=(config.INTERVALS, config.STRAVA),
+        choices=(config.INTERVALS, config.GARMIN, config.STRAVA),
         help="fuente a usar (por defecto, FUENTE_PRINCIPAL del .env)",
     )
     p.add_argument(

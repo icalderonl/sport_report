@@ -17,6 +17,9 @@ dependencies = [
     # Solo para el grafico de volumen. Se importa perezoso: si falta, el
     # reporte llega igual sin imagen.
     "matplotlib>=3.8,<4.0",
+    # Lector oficial del FIT para el respaldo de Garmin (streams y vueltas).
+    # Tambien perezoso: si falta, falla solo esa fuente.
+    "garmin-fit-sdk>=21.0,<22.0",
 ]
 
 [project.optional-dependencies]

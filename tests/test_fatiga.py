@@ -186,7 +186,7 @@ def test_una_semana_por_el_respaldo_no_tiene_bienestar_y_lo_dice():
     r = _calc([], r_acwr=ACWR(), r_foster=Foster(), fuente_degradada=True)
     j = r.to_json()
     assert r.disponible is False
-    assert "respaldo" in j["motivo"] and "Strava" in j["motivo"]
+    assert "Strava" in j["motivo"] and "bienestar" in j["motivo"]
     # Todo en null, ni un cero.
     for clave in ("hrv", "hr_reposo", "sueno_h", "sueno_score", "readiness", "body_battery"):
         assert j[clave]["valor"] is None, clave

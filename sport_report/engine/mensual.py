@@ -347,7 +347,12 @@ def _fatiga_mensual(
     aparte (no las trae `to_json`) porque alimentan el gatillo del segundo
     mensaje mensual, ademas de la lista `alertas` de siempre.
     """
-    degradadas = [s for s in semanas_fuente if s.get("fallback")]
+    from ..fuentes import NO_DISPONIBLE
+
+    degradadas = [
+        s for s in semanas_fuente
+        if s.get("fallback") and "fatiga_descanso" in NO_DISPONIBLE.get(s.get("fuente"), ())
+    ]
     r = m_fatiga.calcular(
         bienestar,
         bienestar_previo,
@@ -392,7 +397,14 @@ def construir(
         semanas_rango[0].clave if semanas_rango else mes.inicio.isoformat(),
         semanas_rango[-1].clave if semanas_rango else mes.fin.isoformat(),
     )
-    degradadas = [f["semana"] for f in fuentes if f["fallback"]]
+    from ..fuentes import NO_DISPONIBLE
+
+    # Solo las semanas de un respaldo que pierde datos (Strava). Una semana por
+    # Garmin trae dinamica y bienestar: no se descuenta.
+    degradadas = [
+        f["semana"] for f in fuentes
+        if f["fallback"] and NO_DISPONIBLE.get(f["fuente"])
+    ]
 
     bienestar = repo.bienestar_entre(mes.inicio, mes.fin)
     bienestar_previo = repo.bienestar_entre(previo.inicio, previo.fin)

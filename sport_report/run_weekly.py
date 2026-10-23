@@ -4,7 +4,7 @@
 
 Encadena: ingesta -> motor de calculo -> narrativa -> formateo -> Telegram.
 
-La ingesta va contra intervals.icu y cae al respaldo de Strava solo si esa
+La ingesta va contra intervals.icu y cae al respaldo de Garmin solo si esa
 falla; el selector vive en `sport_report/fuentes`.
 
 Politica de fallos (spec 10): el objetivo es que SIEMPRE llegue un mensaje.
@@ -175,8 +175,7 @@ def ejecutar(
             # opera el sistema, no para quien entrena.
             problema = (
                 f"los datos vienen de {resultado.fuente} (respaldo) porque "
-                f"{resultado.motivo}: sin GCT, oscilacion vertical, ratio "
-                "vertical ni bienestar"
+                f"{resultado.motivo}"
             )
             problemas.append(problema)
             solo_bitacora.add(problema)
@@ -400,10 +399,10 @@ def _args(argv: list[str] | None):
     )
     p.add_argument(
         "--fuente",
-        choices=(config.INTERVALS, config.STRAVA),
+        choices=(config.INTERVALS, config.GARMIN, config.STRAVA),
         help=(
             "fuerza la fuente principal (por defecto, FUENTE_PRINCIPAL del .env). "
-            "Con strava no hay respaldo: intervals.icu no respalda a Strava"
+            "Con garmin o strava no hay respaldo"
         ),
     )
     p.add_argument("--sin-narrativa", action="store_true", help="no llama a la API de Claude")

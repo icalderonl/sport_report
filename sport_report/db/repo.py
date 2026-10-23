@@ -136,10 +136,13 @@ _MIGRACIONES_TABLA = (
 # fuentes saldrian al doble.
 #
 # El orden es fijo y no sale de la configuracion a proposito: intervals.icu
-# gana porque su registro es el completo (trae GCT, oscilacion y ratio
-# vertical). Que alguien cambie FUENTE_PRINCIPAL no debe reinterpretar el
-# historico ya guardado.
-_ORDEN_FUENTES = "CASE s2.fuente WHEN 'intervals' THEN 0 WHEN 'strava' THEN 1 ELSE 2 END"
+# gana porque es la fuente principal; despues Garmin, su respaldo, que trae la
+# misma dinamica; Strava al final, que solo queda en el historico viejo. Que
+# alguien cambie FUENTE_PRINCIPAL no debe reinterpretar el historico guardado.
+_ORDEN_FUENTES = (
+    "CASE s2.fuente WHEN 'intervals' THEN 0 WHEN 'garmin' THEN 1 "
+    "WHEN 'strava' THEN 2 ELSE 3 END"
+)
 
 
 def _preferencia(alias: str = "sesiones") -> str:
@@ -449,8 +452,25 @@ class Repo:
 
     # -- bienestar -------------------------------------------------------
 
-    def guardar_bienestar(self, dias: Iterable[BienestarDia]) -> int:
-        """Upsert por fecha local. Solo intervals.icu llena esta tabla."""
+    def guardar_bienestar(
+        self, dias: Iterable[BienestarDia], sin_pisar: tuple[str, ...] = ()
+    ) -> int:
+        """Upsert por fecha local.
+
+        `sin_pisar` protege los dias que ya guardo otra fuente: el respaldo de
+        Garmin no reemplaza un dia de intervals.icu, que es la principal.
+        """
+        dias = list(dias)
+        if sin_pisar and dias:
+            marcas = ", ".join("?" * len(sin_pisar))
+            protegidas = {
+                f["fecha_local"]
+                for f in self.con.execute(
+                    f"SELECT fecha_local FROM bienestar WHERE fuente IN ({marcas})",
+                    sin_pisar,
+                )
+            }
+            dias = [d for d in dias if d.fecha_local not in protegidas]
         filas = [
             [getattr(d, c) for c in _CAMPOS_BIENESTAR] + [_ahora_utc()] for d in dias
         ]

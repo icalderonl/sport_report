@@ -1,7 +1,7 @@
 """Ingesta: Strava -> sesiones normalizadas -> SQLite.
 
-Strava es la fuente de **respaldo** (spec 4bis): solo se usa cuando la ingesta
-de intervals.icu falla. Su API no expone GCT, oscilacion vertical, ratio
+Strava ya no es respaldo (lo reemplazo Garmin): solo se usa si se fuerza
+`FUENTE_PRINCIPAL=strava`, y las semanas viejas que salieron de ella. Su API no expone GCT, oscilacion vertical, ratio
 vertical ni bienestar, asi que esos campos quedan en `None` — nunca en cero.
 
 La orquestacion (idempotencia, cache de zonas, banderas de streams y vueltas)

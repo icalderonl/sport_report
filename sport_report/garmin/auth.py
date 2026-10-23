@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from .. import config
 from .errors import GarminAuthError
@@ -52,4 +52,19 @@ def vencimiento_token(token: str) -> datetime | None:
         datos = json.loads(base64.urlsafe_b64decode(carga))
         return datetime.fromtimestamp(int(datos["exp"]), tz=timezone.utc)
     except (ValueError, KeyError, TypeError):
+        return None
+
+
+def dias_para_vencer(hoy: date, vence: str | None = None) -> int | None:
+    """Dias que le quedan a la clave segun GARMIN_API_KEY_VENCE (AAAA-MM-DD).
+
+    None si la fecha no esta anotada o no se puede leer: la API no la informa,
+    asi que sin ese dato no hay forma de avisar antes de que muera.
+    """
+    vence = (vence if vence is not None else config.GARMIN_API_KEY_VENCE).strip()
+    if not vence:
+        return None
+    try:
+        return (date.fromisoformat(vence) - hoy).days
+    except ValueError:
         return None

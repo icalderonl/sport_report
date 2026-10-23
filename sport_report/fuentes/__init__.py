@@ -1,15 +1,17 @@
-"""Seleccion de fuente con respaldo: intervals.icu primero, Strava despues.
+"""Seleccion de fuente con respaldo: intervals.icu primero, Garmin despues.
 
 La regla completa, que es corta a proposito:
 
 - La fuente principal sale de `config.FUENTE_PRINCIPAL` (por defecto
   intervals.icu) y es la que se intenta siempre.
 - Si intervals.icu falla —caida, 401, timeout, 5xx persistente— se intenta
-  Strava **una vez**. Es una semana degradada: sin GCT, sin oscilacion ni ratio
-  vertical, sin bienestar. El reporte lo dice; no se presenta como completa.
-- **No hay respaldo del respaldo.** Con `FUENTE_PRINCIPAL=strava` forzado,
-  intervals.icu no respalda a Strava. Si la fuente que toca falla y no queda
+  Garmin **una vez**. Es una semana de respaldo: Garmin lee el mismo reloj y
+  trae dinamica y bienestar, pero mide el tiempo en movimiento distinto y no
+  da readiness. El reporte lo dice; no se presenta como una semana normal.
+- **No hay respaldo del respaldo.** Con `FUENTE_PRINCIPAL=garmin` o `strava`
+  forzados no se intenta otra fuente. Si la fuente que toca falla y no queda
   respaldo, no se lanza: el reporte sale con lo que ya hay en la base.
+- Strava ya no esta en la cadena; solo se usa si se fuerza.
 - Que fuente sirvio la semana se persiste en `fuentes_semana`, para que el
   reporte lo sepa incluso cuando la corrida va con --sin-ingesta.
 
@@ -43,11 +45,29 @@ __all__ = [
 #: puedan discrepar.
 NO_DISPONIBLE: dict[str, tuple[str, ...]] = {
     config.INTERVALS: (),
+    # Readiness falta, pero es un campo dentro de `fatiga_descanso`, no un
+    # bloque entero: el bloque se llena y el campo se declara sin dato.
+    config.GARMIN: (),
     config.STRAVA: (
         "gct",
         "oscilacion_vertical",
         "ratio_vertical",
         "fatiga_descanso",
+    ),
+}
+
+
+#: Lo que el reporte tiene que decir cuando la semana sale por respaldo.
+AVISO_RESPALDO: dict[str, str] = {
+    config.GARMIN: (
+        "los datos de esta semana vienen de Garmin (respaldo): el tiempo en "
+        "movimiento es el del reloj, un 2-3 % menor que el de intervals.icu (el "
+        "ritmo sale algo mas rapido), y no hay readiness"
+    ),
+    config.STRAVA: (
+        "los datos de esta semana vienen de strava (respaldo): no hay GCT, "
+        "oscilacion vertical, ratio vertical ni bienestar (HRV, sueno, sleep "
+        "score, Body Battery, readiness). La semana no esta completa"
     ),
 }
 
@@ -99,13 +119,17 @@ def abrir(
         from ..intervals.ingest import Ingesta as IngestaIntervals
 
         return IngestaIntervals(repo=repo, plan_store=plan_store)
+    if nombre == config.GARMIN:
+        from ..garmin.ingest import Ingesta as IngestaGarmin
+
+        return IngestaGarmin(repo=repo, plan_store=plan_store)
     if nombre == config.STRAVA:
         from ..strava.ingest import Ingesta as IngestaStrava
 
         return IngestaStrava(repo=repo, plan_store=plan_store)
     raise ValueError(
         f"fuente desconocida: {nombre!r}. Valores validos: "
-        f"{config.INTERVALS!r}, {config.STRAVA!r}"
+        f"{config.INTERVALS!r}, {config.GARMIN!r}, {config.STRAVA!r}"
     )
 
 
@@ -113,9 +137,34 @@ def cadena(principal: str | None = None) -> tuple[str, ...]:
     """Orden de intento. Sin respaldo del respaldo."""
     principal = principal or config.FUENTE_PRINCIPAL
     if principal == config.INTERVALS:
-        return (config.INTERVALS, config.STRAVA)
-    # Strava forzada: intervals.icu no respalda a Strava.
+        return (config.INTERVALS, config.GARMIN)
+    # Garmin o Strava forzadas: nadie las respalda.
     return (principal,)
+
+
+def aviso_vencimiento_garmin(hoy: date) -> str | None:
+    """Aviso para el reporte si la clave de Garmin vence pronto o ya vencio.
+
+    Solo importa mientras Garmin sea el respaldo: el dia que haga falta, una
+    clave vencida deja la semana sin datos.
+    """
+    from ..garmin.auth import dias_para_vencer
+
+    if config.GARMIN not in cadena():
+        return None
+    dias = dias_para_vencer(hoy)
+    if dias is None or dias > config.GARMIN_AVISO_DIAS_REPORTE:
+        return None
+    if dias < 0:
+        return (
+            f"la clave de Garmin vencio hace {-dias} dias: el respaldo de "
+            "intervals.icu no funciona hasta que la renueves en Garmin Connect"
+        )
+    return (
+        f"la clave de Garmin vence en {dias} dias ({config.GARMIN_API_KEY_VENCE}): "
+        "renuevala en Garmin Connect y actualiza GARMIN_API_KEY y "
+        "GARMIN_API_KEY_VENCE en el .env"
+    )
 
 
 def sincronizar(
@@ -170,11 +219,13 @@ def sincronizar(
         if resultado.fallback:
             resumen.avisos.insert(
                 0,
-                f"los datos de esta semana vienen de {nombre} (respaldo): no hay "
-                "GCT, oscilacion vertical, ratio vertical ni bienestar (HRV, "
-                "sueno, sleep score, Body Battery, readiness). La semana no "
-                "esta completa",
+                AVISO_RESPALDO.get(
+                    nombre, f"los datos de esta semana vienen de {nombre} (respaldo)"
+                ),
             )
+        aviso = aviso_vencimiento_garmin(hasta)
+        if aviso:
+            resumen.avisos.append(aviso)
         resultado.resumen = resumen
         break
 

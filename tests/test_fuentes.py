@@ -1,4 +1,4 @@
-"""El selector de fuente: intervals.icu primero, Strava solo si esa falla.
+"""El selector de fuente: intervals.icu primero, Garmin solo si esa falla.
 
 Lo que se prueba aca no es HTTP (eso esta en test_intervals.py y test_strava.py)
 sino la politica: quien va primero, cuando se cae al respaldo, que pasa si las
@@ -17,6 +17,7 @@ from sport_report.db.repo import Repo
 from sport_report.engine import report
 from sport_report.fechas import semana_de
 from sport_report.fuentes import ResumenIngesta
+from sport_report.garmin.errors import GarminError
 from sport_report.intervals.errors import IntervalsAuthError, IntervalsError
 from sport_report.plan.store import PlanStore
 from sport_report.strava.errors import StravaError
@@ -53,6 +54,10 @@ def intervals(excepcion=None) -> FuenteFalsa:
     return FuenteFalsa(config.INTERVALS, (IntervalsError,), excepcion)
 
 
+def garmin(excepcion=None) -> FuenteFalsa:
+    return FuenteFalsa(config.GARMIN, (GarminError,), excepcion)
+
+
 def strava(excepcion=None) -> FuenteFalsa:
     return FuenteFalsa(config.STRAVA, (StravaError,), excepcion)
 
@@ -80,56 +85,51 @@ def _sincronizar(repo, dobles, principal=None, semana=SEMANA.clave):
 # --------------------------------------------------------------------------
 
 
-def test_intervals_va_primero_y_strava_no_se_toca(repo):
-    i, s = intervals(), strava()
-    r = _sincronizar(repo, {config.INTERVALS: i, config.STRAVA: s})
+def test_intervals_va_primero_y_garmin_no_se_toca(repo):
+    i, g = intervals(), garmin()
+    r = _sincronizar(repo, {config.INTERVALS: i, config.GARMIN: g})
 
     assert (r.fuente, r.fallback, r.ok) == (config.INTERVALS, False, True)
     assert len(i.llamadas) == 1
-    assert s.llamadas == [], "se consulto el respaldo sin necesidad"
+    assert g.llamadas == [], "se consulto el respaldo sin necesidad"
     assert r.no_disponibles == ()
 
 
-def test_si_intervals_falla_se_cae_a_strava(repo):
-    i, s = intervals(IntervalsError("503 persistente")), strava()
-    r = _sincronizar(repo, {config.INTERVALS: i, config.STRAVA: s})
+def test_si_intervals_falla_se_cae_a_garmin(repo):
+    i, g = intervals(IntervalsError("503 persistente")), garmin()
+    r = _sincronizar(repo, {config.INTERVALS: i, config.GARMIN: g})
 
-    assert (r.fuente, r.fallback, r.ok) == (config.STRAVA, True, True)
-    assert len(s.llamadas) == 1
+    assert (r.fuente, r.fallback, r.ok) == (config.GARMIN, True, True)
+    assert len(g.llamadas) == 1
     assert "503 persistente" in r.motivo
 
 
 def test_una_clave_rechazada_tambien_dispara_el_respaldo(repo):
     """Un 401 es un IntervalsError: el reporte tiene que salir igual."""
-    i, s = intervals(IntervalsAuthError("401: clave rechazada")), strava()
-    r = _sincronizar(repo, {config.INTERVALS: i, config.STRAVA: s})
-    assert (r.fuente, r.fallback) == (config.STRAVA, True)
+    i, g = intervals(IntervalsAuthError("401: clave rechazada")), garmin()
+    r = _sincronizar(repo, {config.INTERVALS: i, config.GARMIN: g})
+    assert (r.fuente, r.fallback) == (config.GARMIN, True)
 
 
-def test_la_semana_de_respaldo_dice_que_le_falta(repo):
-    i, s = intervals(IntervalsError("timeout")), strava()
-    r = _sincronizar(repo, {config.INTERVALS: i, config.STRAVA: s})
+def test_la_semana_de_respaldo_dice_que_cambia(repo):
+    """Garmin trae dinamica y bienestar: no le falta ningun bloque entero."""
+    i, g = intervals(IntervalsError("timeout")), garmin()
+    r = _sincronizar(repo, {config.INTERVALS: i, config.GARMIN: g})
 
-    assert set(r.no_disponibles) == {
-        "gct",
-        "oscilacion_vertical",
-        "ratio_vertical",
-        "fatiga_descanso",
-    }
+    assert r.no_disponibles == ()
     aviso = r.resumen.avisos[0]
-    assert "respaldo" in aviso and "no esta completa" in aviso
-    for falta in ("GCT", "oscilacion vertical", "ratio vertical", "bienestar"):
-        assert falta in aviso
-    assert (r.resumen.fuente, r.resumen.fallback) == (config.STRAVA, True)
+    assert "Garmin (respaldo)" in aviso
+    assert "tiempo en movimiento" in aviso and "readiness" in aviso
+    assert (r.resumen.fuente, r.resumen.fallback) == (config.GARMIN, True)
 
 
 def test_si_las_dos_fallan_no_se_lanza_y_se_reporta_lo_guardado(repo):
     i = intervals(IntervalsError("caido"))
-    s = strava(StravaError("429 cuota agotada"))
-    r = _sincronizar(repo, {config.INTERVALS: i, config.STRAVA: s})
+    g = garmin(GarminError("429 cuota agotada"))
+    r = _sincronizar(repo, {config.INTERVALS: i, config.GARMIN: g})
 
     assert (r.ok, r.fuente, r.resumen) == (False, "", None)
-    assert [f for f, _ in r.intentos] == [config.INTERVALS, config.STRAVA]
+    assert [f for f, _ in r.intentos] == [config.INTERVALS, config.GARMIN]
     assert "caido" in r.motivo and "429 cuota agotada" in r.motivo
 
 
@@ -145,15 +145,28 @@ def test_no_hay_respaldo_del_respaldo(repo):
     assert [f for f, _ in r.intentos] == [config.STRAVA]
 
 
+def test_garmin_forzada_tampoco_tiene_respaldo(repo):
+    i, g = intervals(), garmin(GarminError("caido"))
+    r = _sincronizar(
+        repo, {config.INTERVALS: i, config.GARMIN: g}, principal=config.GARMIN
+    )
+
+    assert r.ok is False
+    assert i.llamadas == []
+    assert [f for f, _ in r.intentos] == [config.GARMIN]
+
+
 def test_la_cadena_de_intento_es_explicita():
-    assert fuentes.cadena(config.INTERVALS) == (config.INTERVALS, config.STRAVA)
+    assert fuentes.cadena(config.INTERVALS) == (config.INTERVALS, config.GARMIN)
+    assert fuentes.cadena(config.GARMIN) == (config.GARMIN,)
     assert fuentes.cadena(config.STRAVA) == (config.STRAVA,)
 
 
 def test_una_fuente_desconocida_es_un_error_de_programacion():
     with pytest.raises(ValueError) as exc:
-        fuentes.abrir("garmin")
-    assert "intervals" in str(exc.value) and "strava" in str(exc.value)
+        fuentes.abrir("polar")
+    for nombre in ("intervals", "garmin", "strava"):
+        assert nombre in str(exc.value)
 
 
 def test_una_fuente_sin_credencial_cuenta_como_intento_fallido(repo, monkeypatch):
@@ -162,17 +175,17 @@ def test_una_fuente_sin_credencial_cuenta_como_intento_fallido(repo, monkeypatch
         fuentes, "abrir", lambda n, *a, **k: (_ for _ in ()).throw(RuntimeError("falta la clave"))
     )
     r = fuentes.sincronizar(
-        SEMANA.inicio, SEMANA.fin, repo, semana=SEMANA.clave, ingestas={config.STRAVA: strava()}
+        SEMANA.inicio, SEMANA.fin, repo, semana=SEMANA.clave, ingestas={config.GARMIN: garmin()}
     )
-    assert (r.fuente, r.fallback) == (config.STRAVA, True)
+    assert (r.fuente, r.fallback) == (config.GARMIN, True)
     assert "falta la clave" in r.motivo
 
 
 def test_los_clientes_abiertos_se_cierran(repo):
-    i, s = intervals(IntervalsError("caido")), strava()
-    r = _sincronizar(repo, {config.INTERVALS: i, config.STRAVA: s})
+    i, g = intervals(IntervalsError("caido")), garmin()
+    r = _sincronizar(repo, {config.INTERVALS: i, config.GARMIN: g})
     r.cerrar()
-    assert (i.cliente.cerrado, s.cliente.cerrado) == (True, True)
+    assert (i.cliente.cerrado, g.cliente.cerrado) == (True, True)
 
 
 # --------------------------------------------------------------------------
@@ -189,10 +202,10 @@ def test_la_fuente_de_la_semana_queda_registrada(repo):
 def test_el_respaldo_queda_registrado_con_su_motivo(repo):
     _sincronizar(
         repo,
-        {config.INTERVALS: intervals(IntervalsError("503")), config.STRAVA: strava()},
+        {config.INTERVALS: intervals(IntervalsError("503")), config.GARMIN: garmin()},
     )
     fila = repo.fuente_semana(SEMANA.clave)
-    assert (fila["fuente"], fila["fallback"]) == (config.STRAVA, True)
+    assert (fila["fuente"], fila["fallback"]) == (config.GARMIN, True)
     assert "503" in fila["detalle"]
 
 
@@ -202,7 +215,7 @@ def test_si_ninguna_fuente_sirvio_no_se_registra_una_falsa(repo):
         repo,
         {
             config.INTERVALS: intervals(IntervalsError("x")),
-            config.STRAVA: strava(StravaError("y")),
+            config.GARMIN: garmin(GarminError("y")),
         },
     )
     assert repo.fuente_semana(SEMANA.clave) is None
@@ -275,3 +288,36 @@ def test_sin_registro_de_fuente_el_reporte_lo_dice_en_vez_de_suponer(repo, tmp_p
     assert j["fuente"]["usada"] is None
     assert "no hay registro" in j["fuente"]["motivo"]
     assert j["fuente"]["fallback"] is False
+
+
+def test_la_semana_por_garmin_conserva_dinamica_y_bienestar(repo, tmp_path):
+    from sport_report.db.models import BienestarDia
+
+    _corrida(repo, config.GARMIN, gct_ms=280.0)
+    repo.guardar_bienestar(
+        [BienestarDia(fecha_local=SEMANA.inicio.isoformat(), fuente=config.GARMIN, hrv=45.0)]
+    )
+    repo.guardar_fuente_semana(SEMANA.clave, config.GARMIN, True, "intervals: 503")
+
+    j = report.construir(SEMANA, repo, _plan_store(tmp_path))
+
+    assert j["fuente"]["no_disponibles"] == []
+    assert j["gct"]["disponible"] is True
+    assert "Strava" not in j["fatiga_descanso"].get("motivo", "")
+    assert "Garmin (respaldo)" in j["avisos_datos"][0]
+
+
+def test_el_reporte_avisa_que_la_clave_de_garmin_vence(repo, tmp_path, monkeypatch):
+    from sport_report.fechas import ahora_local
+
+    vence = ahora_local().date().toordinal() + 3
+    monkeypatch.setattr(
+        config, "GARMIN_API_KEY_VENCE", date.fromordinal(vence).isoformat()
+    )
+    _corrida(repo, config.INTERVALS)
+    j = report.construir(SEMANA, repo, _plan_store(tmp_path))
+    assert any("clave de Garmin vence en 3 dias" in a for a in j["avisos_datos"])
+
+    monkeypatch.setattr(config, "GARMIN_API_KEY_VENCE", "")
+    j = report.construir(SEMANA, repo, _plan_store(tmp_path))
+    assert not any("clave de Garmin" in a for a in j["avisos_datos"])

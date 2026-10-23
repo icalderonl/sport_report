@@ -109,7 +109,7 @@ class Vuelta:
 
 @dataclass(frozen=True)
 class BienestarDia:
-    """Un dia de bienestar. Solo lo provee intervals.icu.
+    """Un dia de bienestar. Lo provee intervals.icu, o Garmin como respaldo.
 
     Todos los campos son opcionales a proposito: el reloj puede no medir HRV,
     la API puede no exponer Body Battery, y una noche sin registrar no es un

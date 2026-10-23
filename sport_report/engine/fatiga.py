@@ -1,7 +1,7 @@
 """Fatiga y descanso: tendencia de bienestar cruzada con la carga.
 
-Es el primer uso del bienestar que la ingesta venia guardando. Solo lo provee
-intervals.icu, asi que una semana que salio por el respaldo de Strava no tiene
+Es el primer uso del bienestar que la ingesta venia guardando. Lo proveen
+intervals.icu y Garmin (su respaldo); una semana que salio de Strava no tiene
 nada que reportar aca — y eso se dice, no se rellena.
 
 **La regla que no se negocia:** este modulo NO combina bienestar y carga en un
@@ -166,7 +166,7 @@ def calcular(
 
     if fuente_degradada:
         motivo = (
-            "la semana se ingirio desde el respaldo (Strava), que no expone "
+            "la semana se ingirio desde Strava, que no expone "
             "bienestar: no hay HRV, HR de reposo, sueno, sleep score, Body "
             "Battery ni readiness"
         )

@@ -40,6 +40,32 @@ def _secreto(nombre: str, valor: str, obligatorio: bool = True) -> None:
         linea(FALLA if obligatorio else AVISO, nombre, "sin configurar")
 
 
+def estado_clave_garmin(hoy, vence: str | None = None) -> tuple[str, str, str]:
+    """(marca, titulo, detalle) del vencimiento de la clave de Garmin.
+
+    La API no informa la fecha, asi que depende de GARMIN_API_KEY_VENCE. Sin
+    clave no hay nada que vencer; con clave y sin fecha, es un aviso.
+    """
+    from .garmin.auth import dias_para_vencer
+
+    titulo = "vencimiento clave Garmin"
+    vence = vence if vence is not None else config.GARMIN_API_KEY_VENCE
+    if not config.GARMIN_API_KEY:
+        return AVISO, titulo, "sin clave: no hay respaldo si intervals.icu falla"
+    dias = dias_para_vencer(hoy, vence)
+    if dias is None:
+        return (
+            AVISO,
+            titulo,
+            "GARMIN_API_KEY_VENCE sin fecha valida (AAAA-MM-DD): no se puede avisar",
+        )
+    if dias < 0:
+        return FALLA, titulo, f"vencio el {vence}: renueva la clave en Garmin Connect"
+    if dias <= config.GARMIN_AVISO_DIAS_DIAGNOSTICO:
+        return AVISO, titulo, f"vence el {vence} (en {dias} dias): renuevala"
+    return OK, titulo, f"vence el {vence} (en {dias} dias)"
+
+
 def describir_zonas(zonas: list[dict[str, int]]) -> str:
     """Zonas de HR legibles.
 
@@ -139,18 +165,21 @@ def main() -> int:
     # La clave de la fuente principal es obligatoria; la de Strava, no: sin
     # ella se pierde el respaldo, que es un aviso, no una falla.
     _secreto("INTERVALS_API_KEY", config.INTERVALS_API_KEY)
-    _secreto("STRAVA_CLIENT_ID", config.STRAVA_CLIENT_ID, obligatorio=False)
-    _secreto("STRAVA_CLIENT_SECRET", config.STRAVA_CLIENT_SECRET, obligatorio=False)
+    _secreto("GARMIN_API_KEY", config.GARMIN_API_KEY, obligatorio=False)
+    # El respaldo casi nunca se ejercita, asi que su clave puede vencer sin
+    # que nadie lo note hasta el dia que hace falta.
+    linea(*estado_clave_garmin(ahora_local().date()))
     _secreto("TELEGRAM_BOT_TOKEN", config.TELEGRAM_BOT_TOKEN)
     _secreto("TELEGRAM_CHAT_ID", config.TELEGRAM_CHAT_ID)
     _secreto("ANTHROPIC_API_KEY", config.ANTHROPIC_API_KEY, obligatorio=False)
 
-    marca, detalle = estado_tokens(
-        leer_json(config.TOKENS_PATH), config.STRAVA_REFRESH_TOKEN
-    )
-    # El respaldo casi nunca se ejercita, asi que su credencial puede podrirse
-    # sin que nadie lo note hasta el dia que hace falta.
-    linea(AVISO if marca == FALLA else marca, "tokens de Strava (respaldo)", detalle)
+    if config.FUENTE_PRINCIPAL == config.STRAVA:
+        _secreto("STRAVA_CLIENT_ID", config.STRAVA_CLIENT_ID)
+        _secreto("STRAVA_CLIENT_SECRET", config.STRAVA_CLIENT_SECRET)
+        marca, detalle = estado_tokens(
+            leer_json(config.TOKENS_PATH), config.STRAVA_REFRESH_TOKEN
+        )
+        linea(marca, "tokens de Strava", detalle)
 
     # -- plan ------------------------------------------------------------
     seccion("PLAN")
@@ -195,7 +224,9 @@ def main() -> int:
     # -- fuente de datos -------------------------------------------------
     seccion("FUENTE DE DATOS")
     if config.FUENTE_PRINCIPAL == config.INTERVALS:
-        linea(OK, "fuente principal", "intervals.icu (respaldo: Strava)")
+        linea(OK, "fuente principal", "intervals.icu (respaldo: Garmin)")
+    elif config.FUENTE_PRINCIPAL == config.GARMIN:
+        linea(AVISO, "fuente principal", "Garmin forzada: sin readiness y SIN respaldo")
     elif config.FUENTE_PRINCIPAL == config.STRAVA:
         linea(
             AVISO,

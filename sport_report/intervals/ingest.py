@@ -6,7 +6,7 @@ cambio: GCT, oscilacion vertical, ratio vertical y bienestar diario.
 La regla que gobierna todo el archivo: **un dato que la fuente no trajo se
 guarda como `None`**. Ni cero, ni estimado, ni derivado de otros campos. Es lo
 que permite que el reporte diga "no disponible" con motivo en vez de mentir con
-un cero, y lo que hace honesta la semana que sale por el respaldo de Strava.
+un cero, y lo que hace honesta la semana que sale por una fuente con menos datos.
 
 La orquestacion (idempotencia, cache de zonas, banderas) vive en
 `sport_report/fuentes/comun.py`.
