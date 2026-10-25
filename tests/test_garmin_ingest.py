@@ -106,7 +106,8 @@ def test_tipos_de_garmin_al_vocabulario_de_intervals():
     assert tipo_de({"activityType": {"typeKey": "treadmill_running"}}) == "VirtualRun"
     assert tipo_de({"activityType": {"typeKey": "trail_running"}}) == "TrailRun"
     assert tipo_de({"activityType": {"typeKey": "strength_training"}}) == "WeightTraining"
-    assert tipo_de({"activityType": {"typeKey": "elliptical"}}) == "elliptical"
+    assert tipo_de({"activityType": {"typeKey": "elliptical"}}) == "Elliptical"
+    assert tipo_de({"activityType": {"typeKey": "pilates"}}) == "pilates"
     assert tipo_de({}) == "Desconocido"
     for clave in ("running", "treadmill_running", "trail_running"):
         assert tipo_de({"activityType": {"typeKey": clave}}) in config.TIPOS_RUN
@@ -162,6 +163,9 @@ ACTIVIDADES = [
      "startTimeLocal": "2026-10-14 19:00:00", "distance": 39.0, "movingDuration": 60.0},
     {"activityId": 3, "activityName": "Gym", "activityType": {"typeKey": "strength_training"},
      "startTimeLocal": "2026-10-15 19:00:00", "movingDuration": 1800.0},
+    # Sin GPS: Garmin no da movingDuration, solo el cronometro.
+    {"activityId": 5, "activityName": "Ciclismo en sala", "activityType": {"typeKey": "indoor_cycling"},
+     "startTimeLocal": "2026-10-16 19:00:00", "duration": 2701.4, "elapsedDuration": 2750.0},
     # Fuera de la semana: el buscador por fecha la puede devolver igual.
     {"activityId": 4, "activityType": {"typeKey": "running"},
      "startTimeLocal": "2026-10-20 07:00:00", "distance": 5000.0},
@@ -228,12 +232,12 @@ def test_la_semana_por_garmin_trae_todo_lo_que_trae_intervals(tmp_path, repo):
     pedidos: list[str] = []
     r = _ingesta(tmp_path, repo, pedidos).sincronizar(date(2026, 10, 12), date(2026, 10, 18))
 
-    assert (r.actividades, r.corridas, r.fuerza) == (3, 2, 1)
+    assert (r.actividades, r.corridas, r.fuerza, r.otras) == (4, 2, 1, 1)
     assert r.zonas_origen == "garmin" and not r.carga_imprecisa
     assert r.sin_dinamica == 1  # la cinta
 
     s = {x.id_externo: x for x in repo.sesiones_entre(date(2026, 10, 12), date(2026, 10, 18))}
-    assert set(s) == {"1", "2", "3"}  # la del 20 quedo fuera
+    assert set(s) == {"1", "2", "3", "5"}  # la del 20 quedo fuera
     rodaje = s["1"]
     assert rodaje.fuente == config.GARMIN and rodaje.tipo == "Run"
     assert rodaje.fecha_local == "2026-10-13" and rodaje.dia_semana == "M"
@@ -245,6 +249,7 @@ def test_la_semana_por_garmin_trae_todo_lo_que_trae_intervals(tmp_path, repo):
     # Una corrida corta no se filtra (decision de Ignacio), y sin HR no hay carga.
     assert s["2"].distancia_km == 0.039 and s["2"].carga is None
     assert s["3"].es_fuerza and s["3"].distancia_km is None
+    assert (s["5"].tipo, s["5"].duracion_mov_s, s["5"].duracion_tot_s) == ("VirtualRide", 2701, 2750)
 
     # El FIT se baja una sola vez por actividad, aunque de streams y vueltas.
     assert pedidos.count("/download-service/files/activity/1") == 1

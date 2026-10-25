@@ -56,6 +56,15 @@ TIPOS: dict[str, str] = {
     "mountain_biking": "MountainBikeRide",
     "e_bike_fitness": "EBikeRide",
     "e_bike_mountain": "EMountainBikeRide",
+    # Los que `telegram.formato` nombra en la frase sin plan.
+    "elliptical": "Elliptical",
+    "lap_swimming": "Swim",
+    "open_water_swimming": "Swim",
+    "walking": "Walk",
+    "hiking": "Hike",
+    "indoor_rowing": "Rowing",
+    "rowing": "Rowing",
+    "yoga": "Yoga",
 }
 
 #: Maximo de dias por pedido de sueno (lo fija Garmin); se usa tambien para HRV.
@@ -226,7 +235,9 @@ class Ingesta(IngestaBase):
             deriva = metricas.deriva_cardiaca(streams, self.carga.decoupling_min_puntos)
 
         metros = _num(act.get("distance"))
-        mov = _num(act.get("movingDuration"))
+        # Sin GPS (cinta de bici, eliptica) Garmin no calcula movingDuration:
+        # ahi el tiempo en movimiento es el del cronometro, como en intervals.icu.
+        mov = _num(act.get("movingDuration") or act.get("duration"))
         tot = _num(act.get("elapsedDuration") or act.get("duration"))
 
         return SesionReal(
