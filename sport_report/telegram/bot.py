@@ -51,7 +51,7 @@ def _handler(fn):
             return
         try:
             # A un hilo: los comandos son sincronos y algunos tardan segundos
-            # (/progreso sincroniza con Strava). Llamarlos aqui congelaba el
+            # (/progreso sincroniza con la fuente). Llamarlos aqui congelaba el
             # event loop y con el todo el long polling.
             texto = await asyncio.to_thread(fn, update, ctx)
         except Exception:  # nunca dejar al usuario sin respuesta
@@ -105,7 +105,7 @@ def on_estado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
 
 @_handler
 def on_progreso(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
-    # Consulta Strava, asi que tarda unos segundos mas que el resto.
+    # Sincroniza con intervals.icu (o Garmin), asi que tarda unos segundos mas que el resto.
     return comandos.cmd_progreso(_store)
 
 
