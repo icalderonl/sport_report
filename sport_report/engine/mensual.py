@@ -66,8 +66,10 @@ def _tendencia_mes(
     unidad: str,
 ) -> dict[str, Any]:
     """Promedio del mes y delta contra el mes anterior, por sesion de carrera."""
-    a = [v for v in (getattr(s, atributo) for s in actual) if v]
-    p = [v for v in (getattr(s, atributo) for s in previo) if v]
+    from .report import para_tecnica
+
+    a = [v for v in (getattr(s, atributo) for s in para_tecnica(actual)) if v]
+    p = [v for v in (getattr(s, atributo) for s in para_tecnica(previo)) if v]
     valor, anterior = _promedio(a), _promedio(p)
     return {
         "valor": valor,

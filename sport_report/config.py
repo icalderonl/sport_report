@@ -253,6 +253,10 @@ ANTHROPIC_MODEL_MENSUAL = os.getenv("ANTHROPIC_MODEL_MENSUAL", "claude-sonnet-5"
 
 TIPOS_RUN = ("Run", "TrailRun", "VirtualRun")
 TIPOS_FUERZA = ("WeightTraining", "Workout", "Crossfit")
+# Distancia minima para que una corrida entre a los promedios de tecnica
+# (cadencia, GCT, oscilacion, ratio). Un test de esfuerzo en cinta queda
+# registrado como corrida de 39 m: su carga cuenta, su cadencia no es de carrera.
+TECNICA_MIN_KM = 0.5
 # Solo para el resumen por deporte de una semana sin plan: el ciclismo no entra
 # a ningun volumen ni carga de running.
 TIPOS_CICLISMO = (

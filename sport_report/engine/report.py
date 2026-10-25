@@ -10,7 +10,7 @@ import logging
 import statistics
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, Sequence
 
 from .. import config
 from ..config import UMBRALES, Umbrales
@@ -63,12 +63,25 @@ def _promedio(valores: list[float]) -> float | None:
     return round(statistics.fmean(valores), 1) if valores else None
 
 
+def para_tecnica(sesiones: Sequence[SesionReal]) -> list[SesionReal]:
+    """Las sesiones que cuentan para los promedios de tecnica.
+
+    Fuera las de menos de `config.TECNICA_MIN_KM` (un test de esfuerzo, una
+    cinta abortada): siguen contando para la carga y el volumen, pero su
+    cadencia o su GCT no describen como se corre. Sin distancia, se deja.
+    """
+    return [
+        s for s in sesiones
+        if s.distancia_km is None or s.distancia_km >= config.TECNICA_MIN_KM
+    ]
+
+
 def _tendencia(
     actual: list[SesionReal], previa: list[SesionReal], atributo: str
 ) -> Tendencia:
-    """Promedio semanal de un atributo por sesion y delta contra la anterior."""
-    a = [v for v in (getattr(s, atributo) for s in actual) if v]
-    p = [v for v in (getattr(s, atributo) for s in previa) if v]
+    """Promedio semanal de un atributo de tecnica por sesion y delta contra la anterior."""
+    a = [v for v in (getattr(s, atributo) for s in para_tecnica(actual)) if v]
+    p = [v for v in (getattr(s, atributo) for s in para_tecnica(previa)) if v]
     va, vp = _promedio(a), _promedio(p)
     delta = round(va - vp, 1) if va is not None and vp is not None else None
     return Tendencia(valor=va, anterior=vp, delta=delta, n=len(a))
@@ -100,6 +113,11 @@ def _dinamica(
         )
     elif not corridas:
         motivo = "no hubo corridas esta semana"
+    elif not any(s.es_run for s in para_tecnica(actual)):
+        motivo = (
+            f"las {corridas} corridas de la semana miden menos de "
+            f"{config.TECNICA_MIN_KM:g} km: no sirven para medir tecnica"
+        )
     else:
         motivo = f"el reloj no reporto este dato en ninguna de las {corridas} corridas"
     return replace(t, valor=None, unidad=unidad, disponible=False, motivo=motivo)

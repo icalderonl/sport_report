@@ -252,3 +252,26 @@ def test_un_reporte_v1_archivado_se_sigue_formateando():
     # Sin inventar secciones que ese reporte no tenia.
     assert "FATIGA Y DESCANSO" not in texto
     assert "GCT" not in texto
+
+
+def test_un_test_de_esfuerzo_no_entra_a_la_tecnica(entorno):
+    """Caso real (2026-10-09): un test en cinta quedo como corrida de 39 m y
+    hundio la cadencia de la semana. Cuenta para la carga, no para la tecnica."""
+    repo, _ = entorno
+    corrida(repo, 1, cadencia_spm=176.0, gct_ms=232.0)
+    corrida(repo, 3, distancia_km=0.04, cadencia_spm=21.4, gct_ms=400.0, tipo="VirtualRun")
+    corrida(repo, 1, semanas_atras=1, distancia_km=0.04, cadencia_spm=120.2)
+
+    j = _json(entorno)
+    assert (j["cadencia"]["valor"], j["cadencia"]["n_sesiones"]) == (176.0, 1)
+    assert j["cadencia"]["semana_anterior"] is None
+    assert j["gct"]["valor"] == 232.0
+    assert j["carga"]["semanal"] == 800.0
+
+
+def test_si_solo_hubo_un_test_la_tecnica_lo_dice(entorno):
+    repo, _ = entorno
+    corrida(repo, 3, distancia_km=0.04, gct_ms=400.0, tipo="VirtualRun")
+    j = _json(entorno)
+    assert j["gct"]["disponible"] is False
+    assert "menos de 0.5 km" in j["gct"]["motivo"]

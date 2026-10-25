@@ -840,3 +840,15 @@ def test_una_serie_con_huecos_no_rompe_la_atribucion():
     datos = {"monotony": {"promedio": None, "maximo": None,
                           "por_semana": [{"lunes": "2026-08-03", "valor": None}]}}
     assert verificar_atribucion("La monotonia fue 0.9.", datos, METRICAS_MENSUALES)
+
+
+def test_un_test_de_esfuerzo_no_entra_a_la_tecnica_del_mes(entorno):
+    from sport_report.engine.mensual import _tendencia_mes
+
+    largas = [SesionReal(
+        fuente="intervals", id_externo=str(i), fecha_utc="2026-09-08T12:00:00+00:00",
+        fecha_local="2026-09-08", dia_semana="M", tipo="Run", es_fuerza=False,
+        distancia_km=km, cadencia_spm=c,
+    ) for i, (km, c) in enumerate([(10.0, 170.0), (0.04, 21.4)])]
+    t = _tendencia_mes(largas, [], "cadencia_spm", "spm")
+    assert (t["valor"], t["n_sesiones"]) == (170.0, 1)
