@@ -160,7 +160,8 @@ ACTIVIDADES = [
      "avgGroundContactTime": 240.5, "avgVerticalOscillation": 8.7,
      "avgVerticalRatio": 7.456},
     {"activityId": 2, "activityName": "Cinta", "activityType": {"typeKey": "treadmill_running"},
-     "startTimeLocal": "2026-10-14 19:00:00", "distance": 39.0, "movingDuration": 60.0},
+     "startTimeLocal": "2026-10-14 19:00:00", "distance": 39.0, "movingDuration": 60.0,
+     "averageRunningCadenceInStepsPerMinute": 10.7},
     {"activityId": 3, "activityName": "Gym", "activityType": {"typeKey": "strength_training"},
      "startTimeLocal": "2026-10-15 19:00:00", "movingDuration": 1800.0},
     # Sin GPS: Garmin no da movingDuration, solo el cronometro.
@@ -248,6 +249,8 @@ def test_la_semana_por_garmin_trae_todo_lo_que_trae_intervals(tmp_path, repo):
     assert len(repo.vueltas(config.GARMIN, "1")) == 2
     # Una corrida corta no se filtra (decision de Ignacio), y sin HR no hay carga.
     assert s["2"].distancia_km == 0.039 and s["2"].carga is None
+    # La cadencia de Garmin ya es spm: una baja no se duplica.
+    assert s["2"].cadencia_spm == 10.7
     assert s["3"].es_fuerza and s["3"].distancia_km is None
     assert (s["5"].tipo, s["5"].duracion_mov_s, s["5"].duracion_tot_s) == ("VirtualRide", 2701, 2750)
 

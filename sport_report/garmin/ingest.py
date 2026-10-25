@@ -256,9 +256,12 @@ class Ingesta(IngestaBase):
             duracion_tot_s=int(tot) if tot else None,
             hr_promedio=_num(act.get("averageHR")),
             hr_maximo=_num(act.get("maxHR")),
+            # Ya viene en pasos por minuto: no pasa por la heuristica de
+            # `campos.cadencia_spm`, que duplicaria una cadencia baja real
+            # (una caminata, una cinta abortada) creyendola rpm de una pierna.
             cadencia_spm=(
-                campos.cadencia_spm(_num(act.get("averageRunningCadenceInStepsPerMinute")))
-                if es_run
+                round(c, 1)
+                if es_run and (c := _num(act.get("averageRunningCadenceInStepsPerMinute")))
                 else None
             ),
             # Garmin solo da potencia cuando el reloj o un sensor la miden.
