@@ -46,6 +46,11 @@ AYUDA = """Comandos:
   tener mas de una linea (por ejemplo `J: easy 8km Z2` y `J: fuerza`).
   `/setplan proxima` ancla el plan a la semana siguiente.
 
+/tp [proxima] — importa el plan de la semana desde TrainingPeaks (lo que
+  cargo tu entrenadora) y lo carga como un /setplan. Reemplaza el plan de esa
+  semana. Los ritmos y zonas no se importan; los tramos por tiempo tampoco
+  entran en `estructura=`. Ajusta lo que haga falta con /corregir.
+
 /corregir <dia>: <sesion> — arregla un dia sin reenviar la semana entera.
   Reemplaza TODAS las sesiones de ese dia:
 
@@ -134,15 +139,92 @@ def cmd_setplan(
     except PlanInvalido as exc:
         return exc.render()
 
+    return _guardar(store, plan, rango, carrera_store, "Plan cargado")
+
+
+def _guardar(
+    store: PlanStore,
+    plan: PlanSemanal,
+    rango: RangoSemana,
+    carrera_store: CarreraStore | None,
+    titulo: str,
+    avisos: list[str] | None = None,
+) -> str:
+    """Numera, guarda y resume un plan ya validado. Lo comparten /setplan y /tp."""
     nota = ""
     if plan.semana is None:
         plan, nota = _semana_desde_carrera(plan, rango, carrera_store)
 
     anclado = store.guardar(plan, rango)
+    detalle = "".join(f"- {a}\n" for a in avisos or [])
     return (
-        f"Plan cargado para la semana {anclado.rango}.\n"
+        f"{titulo} para la semana {anclado.rango}.\n"
         + (f"{nota}\n" if nota else "")
+        + (f"\nRevisa:\n{detalle}" if detalle else "")
         + f"\n{resumen(anclado.plan, con_fuerza=True)}"
+    )
+
+
+def cmd_tp(
+    store: PlanStore,
+    arg: str,
+    carrera_store: CarreraStore | None = None,
+    cliente: Any = None,
+) -> str:
+    """Importa la semana desde TrainingPeaks y la carga como un /setplan.
+
+    El borrador pasa por `parse_plan`, el mismo parser de /setplan: si la
+    conversion produce algo que la gramatica no acepta, no se guarda nada y se
+    devuelve el borrador para corregirlo y mandarlo a mano.
+    """
+    from ..trainingpeaks.client import TPClient
+    from ..trainingpeaks.convertir import a_setplan
+    from ..trainingpeaks.errors import TPAuthError, TPError
+
+    sufijo = arg.strip()
+    try:
+        rango = resolver_rango(sufijo)
+    except ValueError:
+        return f"Sufijo '{sufijo}' no reconocido. Usa `/tp` (semana en curso) o `/tp proxima`."
+
+    cli = cliente or TPClient()
+    try:
+        entrenamientos = cli.entrenamientos(rango.inicio, rango.fin)
+    except TPAuthError as exc:
+        return (
+            f"TrainingPeaks no acepto la sesion ({exc}).\n\n"
+            "Copia de nuevo la cookie Production_tpAuth desde el navegador a "
+            "TP_AUTH_COOKIE en el .env de la Pi y reinicia el bot. El plan "
+            "cargado no se toco."
+        )
+    except TPError as exc:
+        return f"No pude leer TrainingPeaks: {exc}. El plan cargado no se toco."
+    finally:
+        if cliente is None:
+            cli.cerrar()
+
+    borrador = a_setplan(entrenamientos, rango)
+    if borrador.importados == 0:
+        return (
+            f"TrainingPeaks no tiene corridas ni fuerza planificadas para {rango}. "
+            "No cargue nada."
+            + "".join(f"\n- {a}" for a in borrador.avisos)
+        )
+
+    try:
+        plan = parse_plan(borrador.texto)
+    except PlanInvalido as exc:
+        sufijo_cmd = " proxima" if sufijo else ""
+        return (
+            "No cargue el plan: la conversion desde TrainingPeaks no paso la "
+            f"validacion.\n\n{exc.render()}\n\n"
+            + "".join(f"- {a}\n" for a in borrador.avisos)
+            + "\nCorrige el borrador y mandalo tu:\n\n"
+            + f"/setplan{sufijo_cmd}\n{borrador.texto}"
+        )
+
+    return _guardar(
+        store, plan, rango, carrera_store, "Plan importado de TrainingPeaks", borrador.avisos
     )
 
 

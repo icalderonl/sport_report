@@ -73,6 +73,12 @@ def on_setplan(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
 
 
 @_handler
+def on_tp(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
+    # Lee TrainingPeaks por red: tarda un par de segundos, como /progreso.
+    return comandos.cmd_tp(_store, " ".join(ctx.args or []), _carrera)
+
+
+@_handler
 def on_corregir(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> str:
     # El texto completo, no ctx.args: una correccion puede traer varias lineas.
     return comandos.cmd_corregir(_store, update.effective_message.text or "")
@@ -141,6 +147,7 @@ def main() -> None:
     app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler(["start", "help", "ayuda"], on_start))
     app.add_handler(CommandHandler("setplan", on_setplan))
+    app.add_handler(CommandHandler("tp", on_tp))
     app.add_handler(CommandHandler(["corregir", "corrige"], on_corregir))
     app.add_handler(CommandHandler("carrera", on_carrera))
     app.add_handler(CommandHandler("estimar", on_estimar))

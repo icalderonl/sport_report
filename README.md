@@ -80,6 +80,7 @@ y su ausencia no impide que el reporte llegue.
 | Comando | Para qué |
 |---|---|
 | `/setplan` | Carga el plan de la semana |
+| `/tp [proxima]` | Importa la semana desde TrainingPeaks (el plan de la entrenadora) y la carga como un `/setplan`; ritmos y zonas no se importan |
 | `/corregir <dia>: ...` | Reemplaza las sesiones de un día sin reenviar la semana |
 | `/carrera <fecha> [distancia] [nombre]` | Agrega una carrera objetivo (`/carrera 2026-11-29 21k Fedachi`); `/carrera` las lista, `/carrera principal <n>` elige la principal y `/carrera borrar <n>` quita una |
 | `/estimar [n]` | Tiempo estimado para la carrera principal (o la `<n>`), con rango y confianza |
@@ -101,6 +102,7 @@ y su ausencia no impide que el reporte llegue.
 | `python -m sport_report.plan.migrar` | Reescribe los planes guardados al formato v2 |
 | `python -m sport_report.garmin.verificar [dias]` | Confirma la clave de Garmin y qué campos trae |
 | `python -m sport_report.garmin.comparar [dias]` | Compara Garmin contra intervals.icu, corrida por corrida |
+| `python -m sport_report.trainingpeaks.verificar [--volcar]` | Confirma la cookie de TrainingPeaks y muestra el borrador que cargaría `/tp`, sin guardar nada |
 | `python -m sport_report.strava.autorizar` | Flujo OAuth de Strava (una sola vez) |
 | `python -m sport_report.strava.verificar` | Confirma la conexión con Strava |
 | `python -m sport_report.backfill 120` | Historial inicial: 28 días para ACWR, 112 para el gráfico |

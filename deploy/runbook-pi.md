@@ -109,6 +109,26 @@ sudo -u sportreport /opt/sport_report/.venv/bin/python -m sport_report.garmin.co
 `diagnostico` avisa 14 días antes del vencimiento y el reporte semanal 7. Al
 renovarla se reemplazan las dos líneas.
 
+### TrainingPeaks para `/tp` (opcional)
+
+TrainingPeaks no tiene API oficial para particulares: `/tp` usa la cookie de
+sesión del navegador. Con la sesión abierta en trainingpeaks.com: F12 >
+Application > Cookies > `Production_tpAuth`, copiar el **valor** a un `.env`
+en el PC y pasarlo a la Pi por scp (no teclearlo en la Pi):
+
+```bash
+TP_AUTH_COOKIE=...
+```
+
+La cookie da acceso completo a la cuenta de TP: permisos 600 como el resto del
+`.env`. Vence sin aviso; cuando pase, `/tp` lo dice y se copia otra. Después
+de cambiarla, reiniciar el bot y comprobar:
+
+```bash
+sudo systemctl restart sport-report-bot
+sudo -u sportreport /opt/sport_report/.venv/bin/python -m sport_report.trainingpeaks.verificar
+```
+
 ### Strava (opcional, ya no es respaldo)
 
 ```bash

@@ -237,6 +237,13 @@ GARMIN_API_KEY_VENCE = os.getenv("GARMIN_API_KEY_VENCE", "")
 GARMIN_AVISO_DIAS_DIAGNOSTICO = 14
 GARMIN_AVISO_DIAS_REPORTE = 7
 
+# --- TrainingPeaks: de donde viene el plan, importado a pedido con /tp ---
+# Cookie de sesion `Production_tpAuth` copiada del navegador. No hay API
+# oficial para particulares: VENCE sin aviso y se renueva a mano.
+# `python -m sport_report.trainingpeaks.verificar` comprueba que sirve.
+TP_AUTH_COOKIE = os.getenv("TP_AUTH_COOKIE", "")
+TP_BASE = os.getenv("TP_BASE", "https://tpapi.trainingpeaks.com")
+
 # --- Strava: ya no es respaldo; solo se usa si se fuerza FUENTE_PRINCIPAL ---
 STRAVA_CLIENT_ID = os.getenv("STRAVA_CLIENT_ID", "")
 STRAVA_CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET", "")
