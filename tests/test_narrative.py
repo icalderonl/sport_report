@@ -665,3 +665,22 @@ def test_post_carrera_truncado_se_descarta():
     cli = ClienteFalso(Respuesta("Corriste", stop_reason="max_tokens"))
     n = redactar_post_carrera({}, cliente=cli, modelo="m")
     assert n.ok is False and "max_tokens" in n.error
+
+
+def test_probar_corre_semanal_y_mensual_sin_red(monkeypatch, capsys):
+    """`narrative.probar` estuvo roto desde que el mensual paso a dos mensajes:
+    importaba `redactar_mensual`, que ya no existe."""
+    from sport_report.narrative import probar
+
+    monkeypatch.setattr(probar, "redactar", lambda d: Narrativa(texto="Semana ok."))
+    monkeypatch.setattr(
+        probar, "redactar_mensual_actividad", lambda d: Narrativa(texto="Mes ok.")
+    )
+    monkeypatch.setattr(
+        probar, "redactar_mensual_fisiologia", lambda d: Narrativa(texto=None, error="x")
+    )
+
+    assert probar.main([]) == 0
+    assert probar.main(["--mensual"]) == 1
+    salida = capsys.readouterr().out
+    assert "Semana ok." in salida and "Mes ok." in salida and "Sin narrativa: x" in salida

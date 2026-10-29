@@ -22,7 +22,7 @@ from pathlib import Path
 from .. import config
 from ..logging_setup import setup
 from .claude import redactar
-from .mensual import redactar_mensual
+from .mensual import redactar_mensual_actividad, redactar_mensual_fisiologia
 
 EJEMPLO = {
     "version": 2,
@@ -236,25 +236,39 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Modelo: {modelo}")
     print(f"JSON de entrada: {len(json.dumps(datos))} bytes\n")
 
-    n = redactar_mensual(datos) if a.mensual else redactar(datos)
-    if not n.ok:
-        print(f"Sin narrativa: {n.error}")
-        print("(el reporte se enviaria igual, solo con las cifras)")
-        return 1
+    # El mensual son dos mensajes con prompts distintos: se prueban los dos.
+    if a.mensual:
+        narradores = [
+            ("actividad", redactar_mensual_actividad),
+            ("fatiga y dinamica", redactar_mensual_fisiologia),
+        ]
+    else:
+        narradores = [("semanal", redactar)]
 
-    print("-" * 60)
-    print(n.texto)
-    print("-" * 60)
-    print(f"\ntokens: {n.tokens_entrada} entrada / {n.tokens_salida} salida")
-    if n.numeros_no_verificados:
-        print(f"CIFRAS SIN RESPALDO EN EL JSON: {n.numeros_no_verificados}")
-    else:
-        print("todas las cifras del texto estan en el JSON")
-    if n.cifras_mal_atribuidas:
-        print(f"CIFRAS MAL ATRIBUIDAS: {n.cifras_mal_atribuidas}")
-    else:
-        print("ninguna cifra atribuida a la metrica equivocada")
-    return 0
+    salida = 0
+    for etiqueta, narrador in narradores:
+        print(f"== {etiqueta}")
+        n = narrador(datos)
+        if not n.ok:
+            print(f"Sin narrativa: {n.error}")
+            print("(el reporte se enviaria igual, solo con las cifras)\n")
+            salida = 1
+            continue
+
+        print("-" * 60)
+        print(n.texto)
+        print("-" * 60)
+        print(f"\ntokens: {n.tokens_entrada} entrada / {n.tokens_salida} salida")
+        if n.numeros_no_verificados:
+            print(f"CIFRAS SIN RESPALDO EN EL JSON: {n.numeros_no_verificados}")
+        else:
+            print("todas las cifras del texto estan en el JSON")
+        if n.cifras_mal_atribuidas:
+            print(f"CIFRAS MAL ATRIBUIDAS: {n.cifras_mal_atribuidas}")
+        else:
+            print("ninguna cifra atribuida a la metrica equivocada")
+        print()
+    return salida
 
 
 if __name__ == "__main__":
