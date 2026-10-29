@@ -14,7 +14,7 @@ from typing import Any
 from .claude import Narrativa
 from .mensual import LECTURA_JSON_COMUN, REGLA_ABSOLUTA, _redactar
 
-MAX_TOKENS = 1536
+MAX_TOKENS = 8000  # mismo motivo que en el mensual
 
 SISTEMA_POST_CARRERA = f"""\
 Eres el redactor del informe POST-CARRERA de un atleta de running: llega el

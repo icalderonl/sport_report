@@ -852,3 +852,130 @@ def test_un_test_de_esfuerzo_no_entra_a_la_tecnica_del_mes(entorno):
     ) for i, (km, c) in enumerate([(10.0, 170.0), (0.04, 21.4)])]
     t = _tendencia_mes(largas, [], "cadencia_spm", "spm")
     assert (t["valor"], t["n_sesiones"]) == (170.0, 1)
+
+
+# --------------------------------------------------------------------------
+# A1: el mensual se marca como enviado solo cuando llega
+# --------------------------------------------------------------------------
+
+
+def _correr_mensual(tmp_path, monkeypatch, **kw):
+    repo, store, semana = _entorno_semana(tmp_path)
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path / "salida")
+    opciones = dict(
+        narrador=None,
+        enviador=Buzon(),
+        guardar=True,
+        mensual=SEPTIEMBRE,
+        narrador_mensual_actividad=_narrador_mensual(),
+        carrera_store=CarreraStore(ruta=tmp_path / "carrera.json"),
+    )
+    opciones.update(kw)
+    r = ejecutar(semana, repo, store, **opciones)
+    repo.cerrar()
+    return r
+
+
+def test_envio_ok_deja_la_marca_y_no_se_repite(tmp_path, monkeypatch):
+    _correr_mensual(tmp_path, monkeypatch)
+
+    assert run_weekly.ruta_marca_mensual(SEPTIEMBRE).exists()
+    assert toca_mensual(hoy=date(2026, 10, 5)) is None
+
+
+def test_dry_run_no_consume_el_mensual(tmp_path, monkeypatch):
+    """El caso reproducido en la auditoria: un dry-run lo perdia para siempre."""
+    _correr_mensual(tmp_path, monkeypatch, enviador=None)
+
+    assert not run_weekly.ruta_marca_mensual(SEPTIEMBRE).exists()
+    assert toca_mensual(hoy=date(2026, 10, 5)) == SEPTIEMBRE
+
+
+def test_sin_narrativa_no_consume_el_mensual(tmp_path, monkeypatch):
+    r = _correr_mensual(
+        tmp_path,
+        monkeypatch,
+        narrador_mensual_actividad=lambda d: Narrativa(texto=None, error="APIConnectionError"),
+    )
+
+    assert r.estado == PARCIAL
+    assert toca_mensual(hoy=date(2026, 10, 5)) == SEPTIEMBRE
+
+
+def test_narrador_apagado_no_consume_el_mensual(tmp_path, monkeypatch):
+    """`--sin-narrativa`: no hay texto que mandar."""
+    _correr_mensual(tmp_path, monkeypatch, narrador_mensual_actividad=None)
+
+    assert toca_mensual(hoy=date(2026, 10, 5)) == SEPTIEMBRE
+
+
+def test_fallo_de_telegram_en_el_mensual_no_lo_consume(tmp_path, monkeypatch):
+    class SoloElPrimero(Buzon):
+        def __call__(self, texto):
+            self.mensajes.append(texto)
+            return len(self.mensajes) == 1
+
+    r = _correr_mensual(tmp_path, monkeypatch, enviador=SoloElPrimero())
+
+    assert r.estado == PARCIAL
+    assert toca_mensual(hoy=date(2026, 10, 5)) == SEPTIEMBRE
+
+
+def test_si_falla_solo_el_de_fatiga_el_mes_cuenta_como_enviado(tmp_path, monkeypatch):
+    """Reenviar el de actividad la semana siguiente seria duplicarlo."""
+    repo, store, semana = _entorno_semana(tmp_path)
+    corrida(repo, date(2026, 8, 11), 30.0, gct_ms=240.0)  # dispara fatiga y dinamica
+    repo.cerrar()
+
+    class FallaElTercero(Buzon):
+        def __call__(self, texto):
+            self.mensajes.append(texto)
+            return len(self.mensajes) < 3
+
+    r = _correr_mensual(
+        tmp_path,
+        monkeypatch,
+        enviador=FallaElTercero(),
+        narrador_mensual_fisiologia=_narrador_mensual("Fatiga."),
+    )
+
+    assert r.estado == PARCIAL
+    assert any("fatiga y dinamica" in p for p in r.problemas)
+    assert toca_mensual(hoy=date(2026, 10, 5)) is None
+
+
+def test_meses_enviados_antes_de_la_marca_no_se_repiten(tmp_path, monkeypatch):
+    """Compatibilidad: septiembre salio con el codigo viejo, que no dejaba marca."""
+    from sport_report.storage import escribir_json
+
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    escribir_json(run_weekly.ruta_mensual(SEPTIEMBRE), {"narrativa": {"texto": "Mes ok."}})
+
+    assert toca_mensual(hoy=date(2026, 10, 5)) is None
+
+
+def test_json_viejo_sin_narrativa_no_cuenta_como_enviado(tmp_path, monkeypatch):
+    """El JSON que dejaba un dry-run o una narrativa caida con el codigo viejo."""
+    from sport_report.storage import escribir_json
+
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    escribir_json(run_weekly.ruta_mensual(SEPTIEMBRE), {"mes": {"clave": "2026-09"}})
+
+    assert toca_mensual(hoy=date(2026, 10, 5)) == SEPTIEMBRE
+
+
+def test_main_en_dry_run_no_escribe_reportes(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(run_weekly, "hoy_local", lambda: date(2026, 10, 5))
+
+    assert run_weekly.main(
+        ["--dry-run", "--sin-ingesta", "--sin-narrativa", "--sin-respaldo"]
+    ) in (0, 1)
+
+    assert not (config.DATA_DIR / "reportes").exists()
+    assert toca_mensual(hoy=date(2026, 10, 5)) == SEPTIEMBRE
+
+
+def test_el_envio_exitoso_borra_la_marca_pendiente(tmp_path, monkeypatch):
+    _correr_mensual(tmp_path, monkeypatch)
+
+    assert not run_weekly.ruta_pendiente_mensual(SEPTIEMBRE).exists()

@@ -1,6 +1,7 @@
 """Configuracion central. Todo valor ajustable vive aca, no disperso en el codigo."""
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -257,6 +258,29 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
 # frecuencia es irrelevante, y la ventaja esta en sostener un texto sobre
 # cuatro semanas de datos. No en calcular: eso lo sigue haciendo Python.
 ANTHROPIC_MODEL_MENSUAL = os.getenv("ANTHROPIC_MODEL_MENSUAL", "claude-sonnet-5")
+
+
+def _effort(nombre: str, defecto: str) -> str:
+    """`output_config.effort` para un modelo; vacio = no se envia.
+
+    Vacio no es lo mismo que un valor: claude-haiku-4-5 responde 400 si recibe
+    `effort`, asi que el semanal no lo manda mientras siga en ese modelo. Un
+    valor fuera de la lista se descarta con aviso en vez de costar la narrativa
+    con un 400 de la API.
+    """
+    valor = os.getenv(nombre, defecto).strip().lower()
+    if valor and valor not in ("low", "medium", "high", "xhigh", "max"):
+        logging.getLogger(__name__).warning(
+            "%s=%r no es un effort valido: no se envia", nombre, valor
+        )
+        return ""
+    return valor
+
+
+# Los modelos que piensan por defecto (Sonnet 5 y posteriores) gastan parte de
+# `max_tokens` pensando: `low` acota ese gasto en el mensual y el post-carrera.
+ANTHROPIC_EFFORT = _effort("ANTHROPIC_EFFORT", "")
+ANTHROPIC_EFFORT_MENSUAL = _effort("ANTHROPIC_EFFORT_MENSUAL", "low")
 
 TIPOS_RUN = ("Run", "TrailRun", "VirtualRun")
 TIPOS_FUERZA = ("WeightTraining", "Workout", "Crossfit")

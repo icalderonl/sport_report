@@ -593,3 +593,75 @@ def test_la_conjuncion_no_tapa_una_confusion_de_verdad():
     """La regla nueva no puede volver ciega la comprobacion."""
     # 7.8 es la deriva maxima, no el Monotony.
     assert verificar_atribucion("subio y la monotonia fue 7.8", COMPLETO)
+
+
+# --------------------------------------------------------------------------
+# A2: respuesta cortada por max_tokens y effort
+# --------------------------------------------------------------------------
+
+
+def test_respuesta_truncada_se_descarta():
+    """Un texto cortado no se manda como si estuviera completo."""
+    cli = ClienteFalso(Respuesta("Semana solida: 43.7 km y", stop_reason="max_tokens"))
+    n = redactar(DATOS, cliente=cli)
+    assert n.ok is False and n.texto is None
+    assert "max_tokens" in n.error
+
+
+def test_sin_effort_no_se_envia_output_config(monkeypatch):
+    """claude-haiku-4-5 responde 400 si recibe `effort`."""
+    monkeypatch.setattr(claude.config, "ANTHROPIC_EFFORT", "")
+    cli = ClienteFalso(Respuesta("ok"))
+    redactar(DATOS, cliente=cli)
+    assert "output_config" not in cli.llamadas[0]
+
+
+def test_con_effort_se_envia(monkeypatch):
+    monkeypatch.setattr(claude.config, "ANTHROPIC_EFFORT", "low")
+    cli = ClienteFalso(Respuesta("ok"))
+    redactar(DATOS, cliente=cli)
+    assert cli.llamadas[0]["output_config"] == {"effort": "low"}
+
+
+def test_effort_invalido_se_descarta(monkeypatch):
+    from sport_report import config
+
+    monkeypatch.setenv("X_EFFORT", "bajo")
+    assert config._effort("X_EFFORT", "low") == ""
+    monkeypatch.setenv("X_EFFORT", " Medium ")
+    assert config._effort("X_EFFORT", "low") == "medium"
+    monkeypatch.delenv("X_EFFORT")
+    assert config._effort("X_EFFORT", "low") == "low"
+
+
+def test_presupuesto_de_tiempo_cabe_en_la_unidad():
+    """Semanal + 2 mensuales en el peor caso, contra TimeoutStartSec=30min."""
+    assert 3 * claude.TIMEOUT_S * (claude.REINTENTOS + 1) <= 30 * 60
+
+
+def test_mensual_truncado_por_max_tokens_se_descarta():
+    """El pensamiento del modelo mensual puede agotar el tope antes del texto."""
+    from sport_report.narrative.mensual import redactar_mensual_actividad
+
+    cli = ClienteFalso(Respuesta("Mes de solo carrera: 150.0", stop_reason="max_tokens"))
+    n = redactar_mensual_actividad({"mes": {"clave": "2026-09"}}, cliente=cli)
+    assert n.ok is False and "max_tokens" in n.error
+
+
+def test_mensual_envia_effort_y_tope_holgado(monkeypatch):
+    from sport_report.narrative.mensual import redactar_mensual_fisiologia
+
+    monkeypatch.setattr(claude.config, "ANTHROPIC_EFFORT_MENSUAL", "low")
+    cli = ClienteFalso(Respuesta("ok"))
+    redactar_mensual_fisiologia({"mes": {"clave": "2026-09"}}, cliente=cli)
+    kw = cli.llamadas[0]
+    assert kw["output_config"] == {"effort": "low"}
+    assert kw["max_tokens"] >= 4000
+
+
+def test_post_carrera_truncado_se_descarta():
+    from sport_report.narrative.post_carrera import redactar_post_carrera
+
+    cli = ClienteFalso(Respuesta("Corriste", stop_reason="max_tokens"))
+    n = redactar_post_carrera({}, cliente=cli, modelo="m")
+    assert n.ok is False and "max_tokens" in n.error

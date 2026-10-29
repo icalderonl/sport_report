@@ -23,6 +23,7 @@ un NAS, un directorio sincronizado) para que el respaldo valga de verdad.
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import sqlite3
 import sys
@@ -40,6 +41,11 @@ DIRECTORIOS = ("planes", "reportes")
 # La carrera objetivo se respalda como el plan: se declaro una vez y no
 # esta en ninguna otra parte.
 ARCHIVOS = ("tokens.json", "plan_actual.json", "carrera.json")
+
+# Nombre exacto de una carpeta creada por `respaldar`. `BACKUP_DIR` puede
+# apuntar a un pendrive o un NAS con otras carpetas: la rotacion y `ultimo`
+# solo pueden ver estas, nunca lo ajeno.
+_PATRON = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}")
 
 
 def _marca_de_tiempo(momento: datetime | None = None) -> str:
@@ -65,12 +71,26 @@ def _copiar_base(origen: Path, destino: Path) -> int:
     return destino.stat().st_size
 
 
-def rotar(directorio: Path, conservar: int) -> list[Path]:
-    """Borra los respaldos mas viejos. Devuelve los que se borraron."""
+def _es_respaldo(p: Path) -> bool:
+    return p.is_dir() and not p.is_symlink() and _PATRON.fullmatch(p.name) is not None
+
+
+def _respaldos(directorio: Path) -> list[Path]:
+    """Carpetas de respaldo de `directorio`, de la mas vieja a la mas nueva."""
+    return sorted(p for p in directorio.glob("*") if _es_respaldo(p))
+
+
+def rotar(directorio: Path, conservar: int, actual: Path | None = None) -> list[Path]:
+    """Borra los respaldos mas viejos. Devuelve los que se borraron.
+
+    `actual`, el respaldo recien creado, no se borra nunca, aunque un reloj
+    atrasado lo haga parecer el mas viejo.
+    """
     if conservar < 1:
         return []
-    existentes = sorted(p for p in directorio.glob("*") if p.is_dir())
-    sobran = existentes[:-conservar] if len(existentes) > conservar else []
+    existentes = [p for p in _respaldos(directorio) if p != actual]
+    cupo = conservar - 1 if actual is not None else conservar
+    sobran = existentes[: max(len(existentes) - cupo, 0)]
     for viejo in sobran:
         shutil.rmtree(viejo, ignore_errors=True)
         log.info("respaldo viejo borrado: %s", viejo.name)
@@ -93,7 +113,8 @@ def respaldar(
     conservar = config.RESPALDOS_CONSERVAR if conservar is None else conservar
 
     carpeta = destino / _marca_de_tiempo(momento)
-    carpeta.mkdir(parents=True, exist_ok=True)
+    destino.mkdir(parents=True, exist_ok=True)
+    carpeta.mkdir(mode=0o700, exist_ok=True)
     piezas: dict[str, int] = {}
 
     base = origen / config.DB_PATH.name
@@ -114,7 +135,7 @@ def respaldar(
                 p.stat().st_size for p in (carpeta / nombre).rglob("*") if p.is_file()
             )
 
-    rotar(destino, conservar)
+    rotar(destino, conservar, actual=carpeta)
     log.info("respaldo en %s (%d piezas, %d bytes)", carpeta, len(piezas), sum(piezas.values()))
     return carpeta, piezas
 
@@ -124,7 +145,7 @@ def ultimo(destino: Path | None = None) -> Path | None:
     destino = destino or config.BACKUP_DIR
     if not destino.is_dir():
         return None
-    carpetas = sorted(p for p in destino.glob("*") if p.is_dir())
+    carpetas = _respaldos(destino)
     return carpetas[-1] if carpetas else None
 
 

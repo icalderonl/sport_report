@@ -29,8 +29,10 @@ from .. import config
 
 log = logging.getLogger(__name__)
 
-MAX_TOKENS = 1024
-TIMEOUT_S = 60.0
+# Holgado a proposito: solo se paga lo generado, y un tope justo corta el
+# texto. Si igual se alcanza, la respuesta se descarta (`_truncada`).
+MAX_TOKENS = 4000
+TIMEOUT_S = 120.0
 
 # El SDK ya reintenta solo (por defecto 2 veces, con backoff y respetando
 # retry-after) ante fallo de red, 429 y 5xx. Se sube y se deja explicito porque
@@ -38,7 +40,10 @@ TIMEOUT_S = 60.0
 # ejecuta una vez por semana, un fallo cuesta la narrativa de esa semana entera,
 # y la unidad de systemd tolera 30 minutos. Un `overloaded_error` de un minuto
 # no deberia costar el resumen.
-REINTENTOS = 5
+#
+# Presupuesto: TIMEOUT_S x (REINTENTOS + 1) = 8 min por llamada, y la semanal
+# hace hasta 3 (semanal + 2 mensuales): 24 min, dentro de los 30 de la unidad.
+REINTENTOS = 3
 
 SISTEMA = """\
 Eres el redactor de un reporte semanal de entrenamiento de running. Recibes un
@@ -551,6 +556,21 @@ def _cliente(api_key: str):
     return anthropic.Anthropic(api_key=api_key, timeout=TIMEOUT_S, max_retries=REINTENTOS)
 
 
+def _truncada(respuesta: Any) -> bool:
+    """El modelo se quedo sin `max_tokens`: el texto (si hay) esta cortado.
+
+    Con pensamiento activo el presupuesto se puede ir entero en pensar. Un
+    texto cortado no se envia como si estuviera completo: se descarta y la
+    corrida cae en la ruta de "sin narrativa".
+    """
+    return getattr(respuesta, "stop_reason", "") == "max_tokens"
+
+
+def _opciones(effort: str) -> dict[str, Any]:
+    """Parametros extra de la llamada. `effort` vacio no se envia (Haiku 4.5 da 400)."""
+    return {"output_config": {"effort": effort}} if effort else {}
+
+
 def _texto_de(respuesta: Any) -> str:
     partes = [b.text for b in respuesta.content if getattr(b, "type", "") == "text"]
     return "\n".join(p.strip() for p in partes if p).strip()
@@ -590,6 +610,7 @@ def redactar(
             max_tokens=MAX_TOKENS,
             system=SISTEMA,
             messages=[{"role": "user", "content": cuerpo}],
+            **_opciones(config.ANTHROPIC_EFFORT),
         )
     except Exception as exc:  # incluye errores del SDK, red y timeouts
         log.error("fallo la llamada a la API de Claude: %s: %s", type(exc).__name__, exc)
@@ -600,6 +621,10 @@ def redactar(
         motivo = getattr(detalle, "category", "") if detalle else ""
         log.warning("el modelo declino redactar (%s)", motivo)
         return Narrativa(texto=None, modelo=modelo, error=f"refusal: {motivo}")
+
+    if _truncada(respuesta):
+        log.warning("la narrativa semanal se corto por max_tokens (%d)", MAX_TOKENS)
+        return Narrativa(texto=None, modelo=modelo, error="respuesta truncada por max_tokens")
 
     texto = _texto_de(respuesta)
     if not texto:

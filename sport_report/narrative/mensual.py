@@ -31,15 +31,19 @@ from .. import config
 from .claude import (  # se reusa a proposito: una sola implementacion
     Narrativa,
     _cliente,
+    _opciones,
     _texto_de,
+    _truncada,
     verificar_atribucion,
     verificar_cifras,
 )
 
 log = logging.getLogger(__name__)
 
-MAX_TOKENS_ACTIVIDAD = 1536
-MAX_TOKENS_FISIOLOGIA = 1024
+# El modelo mensual piensa por defecto y eso cuenta contra el tope: con 1-1,5k
+# un mes cargado se quedaba sin texto. Solo se paga lo generado.
+MAX_TOKENS_ACTIVIDAD = 8000
+MAX_TOKENS_FISIOLOGIA = 8000
 
 REGLA_ABSOLUTA = """\
 REGLA ABSOLUTA: no puedes introducir ninguna cifra que no este literalmente en
@@ -330,6 +334,7 @@ def _redactar(
             max_tokens=max_tokens,
             system=sistema,
             messages=[{"role": "user", "content": cuerpo}],
+            **_opciones(config.ANTHROPIC_EFFORT_MENSUAL),
         )
     except Exception as exc:
         log.warning("la API de Claude fallo en el mensual: %s", exc)
@@ -338,6 +343,10 @@ def _redactar(
     if getattr(respuesta, "stop_reason", "") == "refusal":
         log.warning("el modelo rechazo redactar el mensual")
         return Narrativa(texto=None, modelo=modelo, error="el modelo rechazo la solicitud")
+
+    if _truncada(respuesta):
+        log.warning("la narrativa mensual se corto por max_tokens (%d)", max_tokens)
+        return Narrativa(texto=None, modelo=modelo, error="respuesta truncada por max_tokens")
 
     texto = _texto_de(respuesta)
     if not texto:

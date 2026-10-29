@@ -190,3 +190,48 @@ def test_sin_carrera_declarada_el_respaldo_no_falla(data, tmp_path):
     carpeta, piezas = respaldo.respaldar(destino=tmp_path / "resp", origen=data)
     assert "carrera.json" not in piezas
     assert carpeta.exists()
+
+
+def test_la_rotacion_no_borra_carpetas_ajenas(data, tmp_path):
+    """C1: BACKUP_DIR en la raiz de un pendrive con otras carpetas."""
+    destino = tmp_path / "pendrive"
+    ajenas = [destino / n for n in ("fotos", "musica", "2019", "trabajo", "a", "b", "c", "d", "e")]
+    for d in ajenas:
+        d.mkdir(parents=True)
+        (d / "x.txt").write_text("no tocar")
+
+    carpeta, _ = respaldo.respaldar(destino=destino, origen=data, conservar=8)
+
+    assert carpeta.is_dir()
+    assert all((d / "x.txt").is_file() for d in ajenas)
+
+
+def test_ultimo_ignora_carpetas_ajenas(data, tmp_path):
+    destino = tmp_path / "pendrive"
+    (destino / "zzz-no-es-respaldo").mkdir(parents=True)
+    carpeta, _ = respaldo.respaldar(destino=destino, origen=data, momento=datetime(2026, 9, 1))
+
+    assert respaldo.ultimo(destino) == carpeta
+
+
+def test_rotar_nunca_borra_el_recien_creado(data, tmp_path):
+    """Un reloj atrasado hace que el respaldo nuevo parezca el mas viejo."""
+    destino = tmp_path / "resp"
+    for i in range(3):
+        respaldo.respaldar(
+            destino=destino, origen=data, conservar=9, momento=datetime(2026, 9, 10 + i)
+        )
+
+    carpeta, _ = respaldo.respaldar(
+        destino=destino, origen=data, conservar=2, momento=datetime(2020, 1, 1)
+    )
+
+    quedan = sorted(p.name for p in destino.glob("*"))
+    assert carpeta.is_dir()
+    assert len(quedan) == 2
+    assert quedan == [carpeta.name, "2026-09-12T00-00-00"]
+
+
+def test_la_carpeta_del_respaldo_es_privada(data, tmp_path):
+    carpeta, _ = respaldo.respaldar(destino=tmp_path / "resp", origen=data)
+    assert carpeta.stat().st_mode & 0o077 == 0

@@ -33,6 +33,7 @@ from .engine import report
 from .fechas import (
     MesRango,
     RangoSemana,
+    ahora_local,
     hoy_local,
     mes_anterior,
     mes_de,
@@ -81,6 +82,52 @@ def ruta_mensual(mes: MesRango) -> Path:
     return config.DATA_DIR / "reportes" / "mensual" / f"{mes.clave}.json"
 
 
+def ruta_marca_mensual(mes: MesRango) -> Path:
+    return config.DATA_DIR / "reportes" / "mensual" / f"{mes.clave}.enviado"
+
+
+def ruta_pendiente_mensual(mes: MesRango) -> Path:
+    return config.DATA_DIR / "reportes" / "mensual" / f"{mes.clave}.pendiente"
+
+
+def mensual_enviado(mes: MesRango) -> bool:
+    """Si el mensual de `mes` ya llego al atleta.
+
+    La marca `<mes>.enviado` se escribe solo tras un envio exitoso. El JSON del
+    mes es auditoria y se escribe antes de narrar, asi que por si solo no
+    prueba nada.
+
+    Compatibilidad: los meses enviados con el codigo anterior a la marca se
+    reconocen porque su JSON trae la narrativa de actividad. El codigo actual
+    deja `<mes>.pendiente` mientras intenta, para que un JSON suyo con
+    narrativa pero sin envio no pase por uno viejo.
+    """
+    if ruta_marca_mensual(mes).exists():
+        return True
+    if ruta_pendiente_mensual(mes).exists():
+        return False
+    from .storage import leer_json
+
+    try:
+        datos = leer_json(ruta_mensual(mes)) or {}
+    except (OSError, ValueError):
+        return False
+    return bool((datos.get("narrativa") or {}).get("texto"))
+
+
+def _marcar_mensual_pendiente(mes: MesRango) -> None:
+    from .storage import escribir_json
+
+    escribir_json(ruta_pendiente_mensual(mes), {"intento": ahora_local().isoformat()})
+
+
+def _marcar_mensual_enviado(mes: MesRango) -> None:
+    from .storage import escribir_json
+
+    escribir_json(ruta_marca_mensual(mes), {"enviado": ahora_local().isoformat()})
+    ruta_pendiente_mensual(mes).unlink(missing_ok=True)
+
+
 def _guardar_reporte(rango: RangoSemana, datos: dict[str, Any]) -> None:
     """Deja el JSON en disco para poder auditar que vio el sistema esa semana."""
     from .storage import escribir_json
@@ -96,14 +143,16 @@ def toca_mensual(
     El mensual cubre el mes calendario ANTERIOR y se dispara en la primera
     corrida semanal que ya cae en el mes nuevo.
 
-    Son DOS guardas, no una: la de calendario y la de que el archivo del mes no
-    exista. La segunda es la que hace la decision idempotente — una corrida
-    repetida, un `--semana` retroactivo o un reintento tras un fallo no pueden
-    mandar el mensual dos veces.
+    Son DOS guardas, no una: la de calendario y la de que el mes no se haya
+    enviado (`mensual_enviado`). La segunda es la que hace la decision
+    idempotente — una corrida repetida o un `--semana` retroactivo no pueden
+    mandar el mensual dos veces — y, como solo cuenta un envio exitoso, un
+    dry-run o un fallo de Claude o Telegram no lo consumen: se reintenta en la
+    corrida siguiente.
     """
     hoy = hoy or hoy_local()
     mes = mes_anterior(mes_de(hoy))
-    ya_hecho = hecho if hecho is not None else (lambda m: ruta_mensual(m).exists())
+    ya_hecho = hecho if hecho is not None else mensual_enviado
     if forzar:
         return mes
     if ya_hecho(mes):
@@ -296,6 +345,8 @@ def ejecutar(
             if guardar:
                 from .storage import escribir_json
 
+                if not mensual_enviado(mensual):  # un --mensual forzado no la reabre
+                    _marcar_mensual_pendiente(mensual)
                 escribir_json(ruta_mensual(mensual), datos_mensuales)
 
             def _mensaje_mensual(
@@ -339,6 +390,11 @@ def ejecutar(
                         problemas.append("no se pudo enviar el reporte mensual")
                     else:
                         log.info("reporte mensual de %s enviado", mensual.clave)
+                        # El mes cuenta como enviado con el mensaje de
+                        # actividad: si despues falla el de fatiga, reenviar
+                        # el de actividad seria duplicarlo.
+                        if guardar:
+                            _marcar_mensual_enviado(mensual)
                 if texto_fisiologia:
                     if not enviador(cabecera_fisiologia + texto_fisiologia):
                         problemas.append(
@@ -494,6 +550,9 @@ def main(argv: list[str] | None = None) -> int:
             narrador=None if a.sin_narrativa else redactar,
             enviador=None if a.dry_run else enviar,
             enviador_foto=_mostrar_foto if a.dry_run else enviar_foto,
+            # Un dry-run no deja rastro en disco: ni el JSON de la semana ni
+            # el del mes.
+            guardar=not a.dry_run,
             mensual=mes,
             narrador_mensual_actividad=None if a.sin_narrativa else redactar_mensual_actividad,
             narrador_mensual_fisiologia=None if a.sin_narrativa else redactar_mensual_fisiologia,
