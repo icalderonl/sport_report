@@ -44,6 +44,9 @@ class Tendencia:
     unidad: str | None = None
     disponible: bool | None = None
     motivo: str = ""
+    #: "menor"/"mayor"/None, de `config.MEJOR_SI`. Va al JSON para que la
+    #: narrativa no tenga que adivinar si subir es bueno o malo.
+    mejor: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -51,6 +54,7 @@ class Tendencia:
             "semana_anterior": self.anterior,
             "delta": self.delta,
             "n_sesiones": self.n,
+            "mejor": self.mejor,
         }
         if self.unidad is not None:
             d["unidad"] = self.unidad
@@ -84,7 +88,19 @@ def _tendencia(
     p = [v for v in (getattr(s, atributo) for s in para_tecnica(previa)) if v]
     va, vp = _promedio(a), _promedio(p)
     delta = round(va - vp, 1) if va is not None and vp is not None else None
-    return Tendencia(valor=va, anterior=vp, delta=delta, n=len(a))
+    clave = _CLAVE_METRICA.get(atributo, atributo)
+    return Tendencia(
+        valor=va, anterior=vp, delta=delta, n=len(a), mejor=config.MEJOR_SI.get(clave)
+    )
+
+
+# Atributo de `SesionReal` -> clave de la metrica en el JSON y en `MEJOR_SI`.
+_CLAVE_METRICA = {
+    "cadencia_spm": "cadencia",
+    "gct_ms": "gct",
+    "oscilacion_vertical_cm": "oscilacion_vertical",
+    "ratio_vertical_pct": "ratio_vertical",
+}
 
 
 def _dinamica(
@@ -360,6 +376,11 @@ def construir(
         "volumen": {
             "planificado_km": r_adh.volumen_planificado_km,
             "real_km": r_adh.volumen_real_km,
+            # Corridas REALIZADAS en la semana (las que suman `real_km`). No es
+            # `adherencia.sesiones_evaluables`, que cuenta las PLANIFICADAS,
+            # hechas o no: el 2026-11-02 la narrativa dijo "cuatro sesiones"
+            # con tres corridas y una sesion planificada sin hacer.
+            "sesiones_running": sum(1 for s in sesiones if s.es_run),
             "pct": r_adh.volumen_pct,
             "estimado_km": r_adh.volumen_estimado_km,
             # Total de los 7 dias, no solo los transcurridos.

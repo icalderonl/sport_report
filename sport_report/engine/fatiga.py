@@ -18,20 +18,20 @@ import statistics
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
-from ..config import BIENESTAR, Bienestar
+from ..config import BIENESTAR, MEJOR_SI, Bienestar
 from ..db.models import BienestarDia
 
 log = logging.getLogger(__name__)
 
-#: (clave, atributo, unidad, si_bajar_es_peor). Lo ultimo solo se usa para
-#: redactar la lectura del cruce, no para calcular nada.
-METRICAS: tuple[tuple[str, str, str, bool], ...] = (
-    ("hrv", "hrv", "ms", True),
-    ("hr_reposo", "hr_reposo", "lpm", False),
-    ("sueno_h", "sueno_h", "h", True),
-    ("sueno_score", "sueno_score", "", True),
-    ("readiness", "readiness", "", True),
-    ("body_battery", "body_battery", "", True),
+#: (clave, atributo, unidad). Si subir es bueno o malo NO va aca: esta una
+#: sola vez en `config.MEJOR_SI`.
+METRICAS: tuple[tuple[str, str, str], ...] = (
+    ("hrv", "hrv", "ms"),
+    ("hr_reposo", "hr_reposo", "lpm"),
+    ("sueno_h", "sueno_h", "h"),
+    ("sueno_score", "sueno_score", ""),
+    ("readiness", "readiness", ""),
+    ("body_battery", "body_battery", ""),
 )
 
 
@@ -69,7 +69,9 @@ class ResultadoFatiga:
     def to_json(self) -> dict[str, Any]:
         d: dict[str, Any] = {"disponible": self.disponible, "motivo": self.motivo}
         for clave, t in self.metricas.items():
-            d[clave] = t.to_json()
+            # `mejor` sale de la tabla unica de config: la narrativa la lee y
+            # la verificacion de direccion la usa.
+            d[clave] = {**t.to_json(), "mejor": MEJOR_SI.get(clave)}
         d["descanso"] = self.descanso
         d["cruce_carga"] = self.cruce
         return d
@@ -160,7 +162,7 @@ def calcular(
     """
     metricas = {
         clave: _tendencia(bienestar_actual, bienestar_previa, attr, unidad, cfg.dias_minimos)
-        for clave, attr, unidad, _ in METRICAS
+        for clave, attr, unidad in METRICAS
     }
     hay_algo = any(t.disponible for t in metricas.values())
 

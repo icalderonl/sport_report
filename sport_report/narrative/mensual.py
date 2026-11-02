@@ -34,8 +34,10 @@ from .claude import (  # se reusa a proposito: una sola implementacion
     _opciones,
     _texto_de,
     _truncada,
+    DIRECCIONES,
     verificar_atribucion,
     verificar_cifras,
+    verificar_direccion,
 )
 
 log = logging.getLogger(__name__)
@@ -68,7 +70,18 @@ Como leer el JSON:
   este atleta. No los presentes como verdad medica.
 - Si te refieres a una semana en particular, usa la fecha tal como aparece en
   "lunes" (ej. 2026-08-31), nunca la reescribas como DD/MM (31/08): un formato
-  distinto rompe la verificacion automatica de cifras."""
+  distinto rompe la verificacion automatica de cifras.
+- Las cifras semanales del mes son semanas lunes-domingo enteras cuyo lunes
+  cae en el mes: cubren de "mes"."rango_semanas"."inicio" a "fin", que no
+  coincide con el dia 1 y el ultimo del mes. Si hablas del volumen del mes, di
+  ese rango.
+- Describe, no expliques causas. No afirmes por que cambio algo (lesion,
+  parate, viaje, descanso, reconstruccion) ni uses "confirma" o "demuestra":
+  el JSON trae cifras, no motivos. Una semana en 0 km puede ser un hueco de
+  datos: mira "avisos_datos" antes de describirla.
+- "delta" positivo es que SUBIO y negativo que BAJO. Si dices que una metrica
+  "mejoro" o "empeoro", usa su campo "mejor" ("menor": subir es empeorar;
+  "mayor": subir es mejorar; null: di solo si subio o bajo)."""
 
 SISTEMA_MENSUAL_ACTIVIDAD = f"""\
 Eres el redactor del PRIMER mensaje del reporte MENSUAL de entrenamiento de
@@ -83,7 +96,9 @@ corresponde. Recibes un JSON con agregados de 4 o 5 semanas YA CALCULADOS.
 {LECTURA_JSON_COMUN}
 - "carrera" es el marco del texto cuando no es null: cuantas semanas faltan y
   en que fase esta el ciclo. Si es null, no hay carrera declarada y no inventes
-  una.
+  una. Para la fase siguiente usa "semanas_para_fase_siguiente" (dentro de
+  cuantas semanas empieza) y no el umbral de la "nota" ("cuando falten N
+  semanas"): no son el mismo numero.
 - "largos"."por_semana" trae el largo de cada semana (o null si esa semana no
   tenia un 'largo' prescrito en el plan, o no habia plan). No conviertas ese
   null en un cero.
@@ -300,8 +315,15 @@ METRICAS_MENSUALES: tuple[tuple[str, re.Pattern[str], tuple[tuple[str, ...], ...
     (
         "semanas restantes",
         re.compile(r"semanas? (restantes?|para la carrera)|faltan", re.I),
-        (("carrera", "semanas_restantes"),),
+        (("carrera", "semanas_restantes"), ("carrera", "semanas_para_fase_siguiente")),
     ),
+)
+
+#: Tabla de `verificar_direccion` para el JSON mensual: mismos nombres, la
+#: dinamica bajo `dinamica` y el delta contra el mes anterior.
+DIRECCIONES_MENSUALES = tuple(
+    (nombre, patron, ("dinamica", *ruta) if len(ruta) == 1 else ruta)
+    for nombre, patron, ruta in DIRECCIONES
 )
 
 
@@ -362,11 +384,14 @@ def _redactar(
         cifras_mal_atribuidas=verificar_atribucion(
             texto, datos, metricas if metricas is not None else METRICAS_MENSUALES
         ),
+        direcciones_erroneas=verificar_direccion(texto, datos, DIRECCIONES_MENSUALES),
     )
     if n.numeros_no_verificados:
         log.warning("cifras sin respaldo en el mensual: %s", n.numeros_no_verificados)
     if n.cifras_mal_atribuidas:
         log.warning("cifras mal atribuidas en el mensual: %s", n.cifras_mal_atribuidas)
+    if n.direcciones_erroneas:
+        log.warning("direcciones erroneas en el mensual: %s", n.direcciones_erroneas)
     return n
 
 

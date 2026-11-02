@@ -89,6 +89,22 @@ Como leer el JSON:
   puntaje o juicio unico. Reportalos por separado; si dices algo de la relacion
   entre ambos, di los dos numeros. El JSON no trae ningun indice combinado
   porque no existe uno con respaldo metodologico.
+- Direccion de los cambios: "delta" positivo es que SUBIO y negativo que BAJO.
+  Si dices que una metrica "mejoro" o "empeoro", usa su campo "mejor": con
+  "menor" (GCT, oscilacion vertical, ratio vertical, HR de reposo) subir es
+  EMPEORAR; con "mayor" (HRV, sueno, sleep score) subir es mejorar. Si "mejor"
+  es null (cadencia), di solo si subio o bajo, sin calificarlo.
+- Sesiones: las corridas REALIZADAS son "volumen"."sesiones_running".
+  "adherencia"."sesiones_evaluables" son las PLANIFICADAS, hechas o no. No
+  digas "N sesiones de running" con un numero que no sea "sesiones_running".
+- Si "volumen"."estimado_km" es mayor que 0, esa parte del planificado no fue
+  prescrita en km: se estimo desde minutos con un ritmo supuesto, y "pct" de
+  volumen arrastra ese error. Dilo al citar el porcentaje, y no lo presentes
+  por si solo como incumplimiento: el cumplimiento se lee en la adherencia,
+  sesion por sesion en su unidad nativa, nombrando las que no se hicieron.
+- Describe, no expliques causas. No afirmes por que cambio algo (lesion,
+  parate, viaje, descanso, cansancio) ni uses "confirma" o "demuestra" sobre
+  algo que el JSON no dice.
 
 Formato de salida:
 - 5 a 8 lineas de resumen ejecutivo, en espanol, tono directo y concreto. Mas
@@ -114,6 +130,15 @@ class Narrativa:
     numeros_no_verificados: list[str] = field(default_factory=list)
     # Cifras pegadas al nombre de una metrica que no son de esa metrica.
     cifras_mal_atribuidas: list[str] = field(default_factory=list)
+    # "Mejoro"/"subio" contrarios al signo del delta (ver `verificar_direccion`).
+    direcciones_erroneas: list[str] = field(default_factory=list)
+    # "N sesiones" que no coinciden con el conteo del motor.
+    conteos_erroneos: list[str] = field(default_factory=list)
+
+    @property
+    def errores_de_hecho(self) -> list[str]:
+        """Lo que contradice al JSON y por eso sube al aviso del atleta."""
+        return self.cifras_mal_atribuidas + self.direcciones_erroneas + self.conteos_erroneos
 
     @property
     def ok(self) -> bool:
@@ -128,6 +153,8 @@ class Narrativa:
             "tokens_salida": self.tokens_salida,
             "numeros_no_verificados": self.numeros_no_verificados,
             "cifras_mal_atribuidas": self.cifras_mal_atribuidas,
+            "direcciones_erroneas": self.direcciones_erroneas,
+            "conteos_erroneos": self.conteos_erroneos,
         }
 
 
@@ -315,7 +342,7 @@ METRICAS: tuple[tuple[str, re.Pattern[str], tuple[tuple[str, ...], ...]], ...] =
     ),
     (
         "HRV",
-        re.compile(r"\bHRV\b|variabilidad card[ií]aca", re.I),
+        re.compile(r"\bHRV\b|variabilidad (?:de (?:la )?frecuencia )?card[ií]aca", re.I),
         (
             ("fatiga_descanso", "hrv", "valor"),
             ("fatiga_descanso", "hrv", "semana_anterior"),
@@ -512,6 +539,252 @@ def _metrica_mas_cercana(
     return None if mejor is None else mejor[1]
 
 
+# --------------------------------------------------------------------------
+# Verificacion de direccion (subio/bajo, mejoro/empeoro)
+# --------------------------------------------------------------------------
+#
+# Las dos comprobaciones de arriba miran numeros. Ninguna ve la palabra que va
+# al lado: el 2026-11-02 la narrativa escribio "el ratio vertical mejoro 0.4
+# puntos porcentuales a 12.7%" con un delta de +0.4, y en el ratio vertical
+# mas alto es peor. Las cifras eran correctas; la afirmacion, al reves.
+#
+# Esto toma, para cada nombre de metrica con tendencia, la PRIMERA palabra de
+# direccion que le sigue dentro de su clausula y la contrasta con el signo del
+# `delta` del JSON y, si es un juicio (mejoro/empeoro), con `config.MEJOR_SI`.
+# Solo mira hacia adelante ("el GCT subio"), que es como escribe el modelo; "subio
+# el GCT" no se verifica.
+
+# (nombre legible, como aparece en el texto, ruta del bloque con `delta`)
+DIRECCIONES: tuple[tuple[str, re.Pattern[str], tuple[str, ...]], ...] = (
+    ("cadencia", re.compile(r"cadencia", re.I), ("cadencia",)),
+    (
+        "GCT",
+        re.compile(r"\bGCT\b|tiempo de contacto|ground contact( time)?", re.I),
+        ("gct",),
+    ),
+    ("oscilacion vertical", re.compile(r"oscilaci[oó]n vertical", re.I), ("oscilacion_vertical",)),
+    ("ratio vertical", re.compile(r"ratio vertical", re.I), ("ratio_vertical",)),
+    (
+        "HRV",
+        re.compile(r"\bHRV\b|variabilidad (?:de (?:la )?frecuencia )?card[ií]aca", re.I),
+        ("fatiga_descanso", "hrv"),
+    ),
+    (
+        "HR de reposo",
+        re.compile(r"(HR|pulso|frecuencia card[ií]aca) (en |de )?reposo", re.I),
+        ("fatiga_descanso", "hr_reposo"),
+    ),
+    (
+        "sleep score",
+        re.compile(r"sleep score|(puntaje|puntuaci[oó]n) de(l)? sue[nñ]o", re.I),
+        ("fatiga_descanso", "sueno_score"),
+    ),
+    ("sueno", re.compile(r"\bsue[nñ]o\b|horas de sue[nñ]o", re.I), ("fatiga_descanso", "sueno_h")),
+    ("readiness", re.compile(r"readiness|disponibilidad", re.I), ("fatiga_descanso", "readiness")),
+    ("Body Battery", re.compile(r"body battery", re.I), ("fatiga_descanso", "body_battery")),
+)
+
+# Sobre texto sin tildes (`_sin_tildes`). Solo formas que describen un cambio,
+# no un nivel: "una HRV baja" es un nivel y no se toma; "bajo", "cayo" si.
+_SUBE = (
+    r"subio|subiendo|subida|subieron|aumento|aumentando|aumentaron|crecio|creciendo|"
+    r"crecimiento|incremento|incrementando|se elevo|al alza|ascendio|mas alt[oa]"
+)
+_BAJA = (
+    r"bajo|bajando|bajada|bajaron|cayo|cayendo|caida|disminuyo|disminuyendo|"
+    r"disminucion|descendio|descenso|se redujo|reduccion|reduciendo|retrocedio|"
+    r"a la baja|mas baj[oa]"
+)
+_MEJORA = r"mejoro|mejorando|mejora|mejoria|mas eficiente"
+_EMPEORA = r"empeoro|empeorando|empeoramiento|deterioro|se deterioro|menos eficiente"
+_RE_DIRECCION = re.compile(
+    rf"\b(?:(?P<sube>{_SUBE})|(?P<baja>{_BAJA})|(?P<mejora>{_MEJORA})|(?P<empeora>{_EMPEORA}))\b"
+)
+# Fin de la clausula: punto que no es decimal, `;` o salto de linea.
+_RE_FIN_CLAUSULA = re.compile(r"[;\n]|\.(?!\d)|(?<!\d)\.")
+_VENTANA_DIRECCION = 60
+
+
+def _sin_tildes(texto: str) -> str:
+    """Minusculas sin tildes, caracter a caracter: las posiciones no cambian."""
+    import unicodedata
+
+    return "".join(unicodedata.normalize("NFD", c)[0] for c in texto.lower())
+
+
+def _apariciones_sin_solape(
+    texto: str, tabla: tuple[tuple[str, "re.Pattern[str]", Any], ...]
+) -> list[tuple[int, int, int]]:
+    """(inicio, fin, indice) de cada nombre, descartando los contenidos en otro.
+
+    "puntaje de sueno" contiene "sueno": sin esto, la palabra que le sigue se
+    contrastaria tambien contra las horas de sueno.
+    """
+    todas = [
+        (m.start(), m.end(), i)
+        for i, (_, patron, _) in enumerate(tabla)
+        for m in patron.finditer(texto)
+    ]
+    return sorted(
+        a for a in todas
+        if not any(
+            b is not a and b[0] <= a[0] and a[1] <= b[1] and (b[1] - b[0]) > (a[1] - a[0])
+            for b in todas
+        )
+    )
+
+
+def verificar_direccion(
+    texto: str,
+    datos: dict[str, Any],
+    tabla: tuple[tuple[str, "re.Pattern[str]", tuple[str, ...]], ...] | None = None,
+) -> list[str]:
+    """Afirmaciones de direccion que contradicen el `delta` del JSON."""
+    tabla = tabla if tabla is not None else DIRECCIONES
+    plano = _sin_tildes(texto)
+    apariciones = _apariciones_sin_solape(texto, tabla)
+    problemas: list[str] = []
+    vistos: set[tuple[int, str]] = set()
+    for k, (inicio, fin, indice) in enumerate(apariciones):
+        nombre, _, ruta = tabla[indice]
+        bloque = _valor_en(datos, ruta)
+        if not isinstance(bloque, dict):
+            continue
+        # La clausula termina en el fin de frase, en el siguiente nombre de
+        # metrica o en una conjuncion: lo que viene despues habla de otra cosa.
+        limite = min(len(texto), fin + _VENTANA_DIRECCION)
+        if k + 1 < len(apariciones):
+            limite = min(limite, apariciones[k + 1][0])
+        trozo = plano[fin:limite]
+        for corte in (_RE_FIN_CLAUSULA.search(trozo), _RE_CONJUNCION.search(trozo)):
+            if corte:
+                trozo = trozo[: corte.start()]
+        m = _RE_DIRECCION.search(trozo)
+        if not m:
+            continue
+        if re.search(r"\b(no|sin|ni)\s+(se\s+)?$", trozo[: m.start()]):
+            continue  # "no bajo", "sin mejora": no es una afirmacion de direccion
+        palabra = texto[fin + m.start() : fin + m.end()]
+        tipo = m.lastgroup
+        delta = bloque.get("delta")
+        mejor = config.MEJOR_SI.get(ruta[-1])
+        error = ""
+        if not isinstance(delta, (int, float)) or isinstance(delta, bool):
+            error = "pero no hay periodo anterior con que comparar (delta null)"
+        elif tipo in ("sube", "baja"):
+            if (tipo == "sube") != (delta > 0) or delta == 0:
+                error = f"pero el delta es {delta:+g}"
+        elif mejor is None:
+            error = (
+                f"pero el delta es {delta:+g} y esta metrica no tiene un sentido "
+                "fijo de mejor o peor: solo se puede decir si subio o bajo"
+            )
+        else:
+            mejoro = (delta < 0) if mejor == "menor" else (delta > 0)
+            if delta == 0 or (tipo == "mejora") != mejoro:
+                error = f"pero el delta es {delta:+g} y {mejor} es mejor"
+        if error and (indice, tipo) not in vistos:
+            vistos.add((indice, tipo))
+            problemas.append(f"{nombre}: el texto dice '{palabra}' {error}")
+    return problemas
+
+
+# --------------------------------------------------------------------------
+# Verificacion de conteos de sesiones
+# --------------------------------------------------------------------------
+#
+# "cuatro sesiones" no tiene digitos y ninguna comprobacion de cifras lo ve. El
+# 2026-11-02 la narrativa dijo "20.17 km de running en cuatro sesiones" con tres
+# corridas: el 4 eran las sesiones PLANIFICADAS (adherencia), una de ellas sin
+# hacer. Cada conteo se contrasta contra el del tema de su clausula; si la
+# clausula no deja claro de que habla, no se verifica (mejor callar que
+# reportar una confusion que no existe).
+
+_NUMEROS_PALABRA = {
+    "un": 1, "una": 1, "uno": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5,
+    "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10, "once": 11,
+    "doce": 12, "trece": 13, "catorce": 14,
+}
+_RE_CONTEO = re.compile(
+    r"\b(?P<n>\d+|" + "|".join(_NUMEROS_PALABRA) + r")\s+"
+    r"(?P<que>sesion(?:es)?|corridas?|salidas?|entrenamientos?)\b"
+)
+_RE_FIN_FRASE_CORTA = re.compile(r"[;:,\n]|\.(?!\d)|(?<!\d)\.")
+
+# (tema, patron sobre la clausula sin tildes, rutas legitimas). Gana el primero.
+_TEMAS_CONTEO: tuple[tuple[str, "re.Pattern[str]", tuple[tuple[str, ...], ...]], ...] = (
+    (
+        "fuerza",
+        re.compile(r"fuerza"),
+        (("adherencia", "fuerza", "planificadas"), ("adherencia", "fuerza", "cumplidas")),
+    ),
+    ("otro deporte", re.compile(r"bici|ciclismo|rodillo|natacion|en sala"), ()),
+    (
+        "tecnica",
+        re.compile(r"cadencia|gct|contacto|oscilacion|ratio vertical"),
+        (
+            ("cadencia", "n_sesiones"), ("gct", "n_sesiones"),
+            ("oscilacion_vertical", "n_sesiones"), ("ratio_vertical", "n_sesiones"),
+        ),
+    ),
+    (
+        "deriva cardiaca",
+        re.compile(r"deriva|decoupling|\blarga"),
+        (("deriva_cardiaca", "n_sesiones"),),
+    ),
+    (
+        "adherencia",
+        re.compile(
+            r"planific|evaluab|cumpl|adherencia|prescrit|faltante|pendiente|"
+            r"no registrad|no realizad|sin hacer|del plan"
+        ),
+        (("adherencia", "sesiones_evaluables"), ("adherencia", "sesiones_cumplidas")),
+    ),
+    (
+        "sesiones de running",
+        re.compile(r"running|corrid|correr|trote|\bkm\b|kilometr|rodaje"),
+        (("volumen", "sesiones_running"), ("actividad_sin_plan", "running", "sesiones")),
+    ),
+)
+
+
+def verificar_conteo_sesiones(texto: str, datos: dict[str, Any]) -> list[str]:
+    """Conteos de sesiones ("cuatro sesiones") que no son los del tema del que hablan."""
+    plano = _sin_tildes(texto)
+    problemas: list[str] = []
+    for m in _RE_CONTEO.finditer(plano):
+        bruto = m.group("n")
+        n = int(bruto) if bruto.isdigit() else _NUMEROS_PALABRA[bruto]
+        # Clausula: del separador anterior al siguiente.
+        previos = list(_RE_FIN_FRASE_CORTA.finditer(plano, 0, m.start()))
+        ini = previos[-1].end() if previos else 0
+        sig = _RE_FIN_FRASE_CORTA.search(plano, m.end())
+        clausula = plano[ini : sig.start() if sig else len(plano)]
+        if m.group("que").startswith("corrida") and not any(
+            p.search(clausula) for _, p, _ in _TEMAS_CONTEO[:-1]
+        ):
+            clausula += " corrida"
+        tema = next(((t, r) for t, p, r in _TEMAS_CONTEO if p.search(clausula)), None)
+        if tema is None or not tema[1]:
+            continue
+        nombre, rutas = tema
+        legitimos: set[int] = set()
+        for ruta in rutas:
+            v = _valor_en(datos, ruta)
+            if isinstance(v, int) and not isinstance(v, bool):
+                legitimos.add(v)
+        if nombre == "adherencia" and len(legitimos) == 2:
+            # "una sesion faltante" = evaluables - cumplidas.
+            legitimos.add(max(legitimos) - min(legitimos))
+        if not legitimos or n in legitimos:
+            continue
+        problemas.append(
+            f"{nombre}: el texto dice '{texto[m.start():m.end()]}' y el JSON trae "
+            f"{' o '.join(str(v) for v in sorted(legitimos))}"
+        )
+    return problemas
+
+
 def verificar_cifras(texto: str, datos: dict[str, Any]) -> list[str]:
     """Numeros del texto que no aparecen en el JSON.
 
@@ -645,6 +918,11 @@ def redactar(
         # atleta sepa que no se fie de ese numero.
         log.error("la narrativa atribuye mal una cifra: %s", mal_atribuidas)
 
+    direcciones = verificar_direccion(texto, datos)
+    conteos = verificar_conteo_sesiones(texto, datos)
+    if direcciones or conteos:
+        log.error("la narrativa contradice al JSON: %s", direcciones + conteos)
+
     return Narrativa(
         texto=texto,
         modelo=getattr(respuesta, "model", modelo),
@@ -652,4 +930,6 @@ def redactar(
         tokens_salida=getattr(uso, "output_tokens", 0) or 0,
         numeros_no_verificados=sospechosos,
         cifras_mal_atribuidas=mal_atribuidas,
+        direcciones_erroneas=direcciones,
+        conteos_erroneos=conteos,
     )

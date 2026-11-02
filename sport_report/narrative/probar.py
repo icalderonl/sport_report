@@ -267,6 +267,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"CIFRAS MAL ATRIBUIDAS: {n.cifras_mal_atribuidas}")
         else:
             print("ninguna cifra atribuida a la metrica equivocada")
+        if n.direcciones_erroneas:
+            print(f"DIRECCIONES ERRONEAS: {n.direcciones_erroneas}")
+        if n.conteos_erroneos:
+            print(f"CONTEOS ERRONEOS: {n.conteos_erroneos}")
         print()
     return salida
 

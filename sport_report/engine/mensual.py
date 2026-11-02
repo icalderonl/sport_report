@@ -71,11 +71,14 @@ def _tendencia_mes(
     a = [v for v in (getattr(s, atributo) for s in para_tecnica(actual)) if v]
     p = [v for v in (getattr(s, atributo) for s in para_tecnica(previo)) if v]
     valor, anterior = _promedio(a), _promedio(p)
+    from .report import _CLAVE_METRICA
+
     return {
         "valor": valor,
         "mes_anterior": anterior,
         "delta": _delta(valor, anterior),
         "n_sesiones": len(a),
+        "mejor": config.MEJOR_SI.get(_CLAVE_METRICA.get(atributo, atributo)),
         "unidad": unidad,
         "disponible": valor is not None,
         "motivo": (
@@ -140,7 +143,8 @@ def _semana(
     umbrales: Umbrales,
 ) -> dict[str, Any]:
     """Las cifras de una semana, recalculadas. Solo corridas."""
-    sesiones = _corridas(repo.sesiones_entre(rango.inicio, rango.fin))
+    todas = repo.sesiones_entre(rango.inicio, rango.fin)
+    sesiones = _corridas(todas)
     carga_por_dia = repo.carga_diaria(
         rango.fin - timedelta(days=m_acwr.DIAS_CRONICA - 1), rango.fin
     )
@@ -180,7 +184,41 @@ def _semana(
         "con_plan": plan is not None,
         "largo_km": largo_km,
         "calidad": calidad,
+        # Solo para distinguir una semana sin correr de un hueco de datos
+        # (`_semanas_sin_corridas`). No entran en ninguna cifra del mensual.
+        "otras_actividades": len(todas) - len(sesiones),
+        "dias_bienestar": len(repo.bienestar_entre(rango.inicio, rango.fin)),
     }
+
+
+def _semanas_sin_corridas(semanas: list[dict[str, Any]]) -> list[str]:
+    """Avisos para las semanas con 0 corridas: ¿descanso o hueco de datos?
+
+    La base no puede saberlo, pero si puede decir si la fuente estaba viva esa
+    semana: si registro otras actividades o dias de bienestar, el reloj
+    sincronizaba y el cero es real. Si no hay NADA, puede ser cualquiera de las
+    dos cosas, y el texto no debe presentarlo como una semana sin correr ni
+    sacar conclusiones de el.
+    """
+    avisos = []
+    for s in semanas:
+        if s["corridas"]:
+            continue
+        if s["otras_actividades"] or s["dias_bienestar"]:
+            avisos.append(
+                f"semana del {s['lunes']}: 0 corridas, pero la fuente si registro "
+                f"{s['otras_actividades']} actividad(es) de otro deporte y "
+                f"{s['dias_bienestar']} dia(s) de bienestar, asi que estaba "
+                "sincronizando: el 0 es real, no un hueco de datos. La causa no "
+                "esta en los datos"
+            )
+        else:
+            avisos.append(
+                f"semana del {s['lunes']}: sin ninguna actividad ni dato de "
+                "bienestar registrado. Puede ser una semana sin entrenar o un "
+                "hueco de datos de la fuente: no se puede distinguir"
+            )
+    return avisos
 
 
 def _volumen(semanas: list[dict[str, Any]], km_mes_anterior: float | None) -> dict[str, Any]:
@@ -427,6 +465,7 @@ def construir(
         )
     if not sesiones_mes:
         avisos.append("el mes no tiene ninguna corrida registrada")
+    avisos.extend(_semanas_sin_corridas(semanas))
 
     dinamica = {
         "cadencia": _tendencia_mes(sesiones_mes, sesiones_previo, "cadencia_spm", "spm"),
@@ -474,6 +513,13 @@ def construir(
             "fin": mes.fin.isoformat(),
             "semanas": len(semanas_rango),
             "semanas_incompletas": incompletas,
+            # Lo que de verdad cubren el volumen, la carga y la adherencia:
+            # semanas lunes-domingo cuyo lunes cae en el mes, enteras. Puede
+            # empezar despues del dia 1 y terminar en el mes siguiente.
+            "rango_semanas": {
+                "inicio": semanas_rango[0].inicio.isoformat() if semanas_rango else None,
+                "fin": semanas_rango[-1].fin.isoformat() if semanas_rango else None,
+            },
             "alcance": ALCANCE,
             "tipos_incluidos": list(config.TIPOS_RUN),
             "nota_alcance": (

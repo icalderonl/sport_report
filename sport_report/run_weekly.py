@@ -258,6 +258,18 @@ def ejecutar(
                     + "; ".join(mal)
                     + "). Fiate de los numeros de abajo, no de los del resumen"
                 ]
+            # Lo mismo con un "mejoro" que fue un empeoramiento o un conteo de
+            # sesiones que no es el del motor: las cifras pueden estar bien y
+            # la afirmacion al reves.
+            contradice = list(getattr(n, "direcciones_erroneas", [])) + list(
+                getattr(n, "conteos_erroneos", [])
+            )
+            if contradice:
+                datos["avisos_datos"] = list(datos["avisos_datos"]) + [
+                    "el resumen automatico contradice los datos ("
+                    + "; ".join(contradice)
+                    + "). Fiate de los deltas y la adherencia de abajo"
+                ]
         else:
             log.warning("sin narrativa: %s", n.error)
             problemas.append(f"resumen automatico no disponible ({n.error})")

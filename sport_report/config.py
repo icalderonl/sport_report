@@ -302,3 +302,22 @@ TIPOS_INDOOR = ("VirtualRun", "VirtualRide")
 # (hoy solo 'fallback') implica carga ponderada con peso plano, que el reporte
 # debe marcar como imprecisa.
 ORIGENES_ZONAS_CONFIABLES = ("intervals", "garmin", "strava")
+
+# Sentido de "mejor" de cada metrica con tendencia: "menor" o "mayor". Es la
+# unica definicion: el motor la copia al JSON (`mejor`) para que la narrativa
+# la lea, y `narrative.claude.verificar_direccion` la usa para detectar un
+# "mejoro" que en realidad fue un empeoramiento. La cadencia queda en None a
+# proposito: subir o bajar no es mejor ni peor sin contexto (ritmo, terreno),
+# asi que de ella solo se verifica si subio o bajo, nunca si "mejoro".
+MEJOR_SI: dict[str, str | None] = {
+    "cadencia": None,
+    "gct": "menor",
+    "oscilacion_vertical": "menor",
+    "ratio_vertical": "menor",
+    "hrv": "mayor",
+    "hr_reposo": "menor",
+    "sueno_h": "mayor",
+    "sueno_score": "mayor",
+    "readiness": "mayor",
+    "body_battery": "mayor",
+}

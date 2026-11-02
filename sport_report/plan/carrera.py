@@ -81,17 +81,31 @@ class Carrera:
         """Lo que consume la narrativa: cifras ya calculadas y una nota."""
         restantes = self.semanas_restantes(hoy)
         fase = self.fase(hoy, cfg)
+        # Cuantas semanas faltan para la fase siguiente, ya calculado: "la
+        # construccion empieza a 8 semanas" se leyo como "faltan 8 semanas"
+        # cuando significa "cuando falten 8 para la carrera" (2026-11-02).
+        siguiente: tuple[str, int] | None = {
+            BASE: (CONSTRUCCION, restantes - cfg.semanas_construccion),
+            CONSTRUCCION: (AFINAMIENTO, restantes - cfg.semanas_afinamiento),
+            AFINAMIENTO: (SEMANA_DE_CARRERA, restantes),
+        }.get(fase)
         notas = {
             PASADA: f"la carrera fue hace {abs(restantes)} semana(s)",
             SEMANA_DE_CARRERA: "es la semana de la carrera",
             AFINAMIENTO: (
-                f"a {restantes} semana(s): fase de afinamiento, que empieza a "
-                f"{cfg.semanas_afinamiento} semanas de la carrera"
+                f"faltan {restantes} semana(s) para la carrera: fase de afinamiento, "
+                f"que empieza cuando faltan {cfg.semanas_afinamiento} semanas"
             ),
-            CONSTRUCCION: f"a {restantes} semana(s): fase de construccion",
+            CONSTRUCCION: (
+                f"faltan {restantes} semana(s) para la carrera: fase de construccion; "
+                f"el afinamiento empieza cuando falten {cfg.semanas_afinamiento} "
+                f"semanas, o sea dentro de {siguiente[1] if siguiente else 0} semana(s)"
+            ),
             BASE: (
-                f"a {restantes} semana(s): fase de base, la construccion empieza a "
-                f"{cfg.semanas_construccion} semanas"
+                f"faltan {restantes} semana(s) para la carrera: fase de base; la "
+                f"construccion empieza cuando falten {cfg.semanas_construccion} "
+                f"semanas para la carrera, o sea dentro de "
+                f"{siguiente[1] if siguiente else 0} semana(s)"
             ),
         }
         return {
@@ -99,6 +113,8 @@ class Carrera:
             "nombre": self.nombre,
             "semanas_restantes": restantes,
             "fase": fase,
+            "fase_siguiente": siguiente[0] if siguiente else None,
+            "semanas_para_fase_siguiente": siguiente[1] if siguiente else None,
             "nota": notas[fase],
         }
 
