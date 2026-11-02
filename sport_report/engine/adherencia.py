@@ -234,7 +234,8 @@ def _objetivo_agregado(
             return s.objetivo_km(), "km", ""
         return s.objetivo_min(), "min", ""
 
-    unidades = {s.unidad for s in planificadas}
+    # Con `estructura=` la sesion se compara en km aunque el total este en min.
+    unidades = {"km" if s.estructura is not None else s.unidad for s in planificadas}
     if unidades == {"km"}:
         total = sum(s.objetivo_km() or 0.0 for s in planificadas)
         return round(total, 2), "km", f"{len(planificadas)} sesiones planificadas, sumadas"

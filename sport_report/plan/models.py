@@ -55,13 +55,25 @@ class Bloque:
     """Un tramo de la estructura. reps=1 para un tramo simple.
 
     distancia_km es la distancia de UNA repeticion; dura() da el total del bloque.
-    ritmo solo se usa en sesiones `prog`.
+    ritmo se escribe en los bloques de `prog` y en los tramos por tiempo.
+
+    Un tramo por tiempo (`15min`, `4x5min@5:30/5:50`) se convierte a km al
+    cargar el plan: duracion_s guarda lo escrito y distancia_km la estimacion
+    (al punto medio del ritmo, o al ritmo easy si no lleva). Desde ahi todo el
+    motor trabaja en km, igual que con un tramo por distancia.
     """
 
     reps: int
     distancia_km: float
     ritmo: Ritmo | None = None
     crudo: str = ""
+    #: Duracion de UNA repeticion si el tramo se escribio por tiempo.
+    duracion_s: int | None = None
+
+    @property
+    def estimado(self) -> bool:
+        """True si distancia_km sale de convertir un tiempo, no de lo escrito."""
+        return self.duracion_s is not None
 
     def dura(self) -> float:
         return self.reps * self.distancia_km
@@ -70,18 +82,27 @@ class Bloque:
         return self.crudo
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "reps": self.reps,
             "distancia_km": self.distancia_km,
             "ritmo": self.ritmo.to_json() if self.ritmo else None,
             "crudo": self.crudo,
         }
+        # Solo cuando hay: un plan por distancia se guarda igual que siempre.
+        if self.duracion_s is not None:
+            d["duracion_s"] = self.duracion_s
+        return d
 
 
 @dataclass(frozen=True)
 class Estructura:
     bloques: tuple[Bloque, ...]
     crudo: str
+
+    @property
+    def estimada(self) -> bool:
+        """True si algun tramo se escribio por tiempo y su distancia es estimada."""
+        return any(b.estimado for b in self.bloques)
 
     def distancia_dura_km(self) -> float:
         """Suma de calentamiento + reps + enfriamiento, SIN recuperacion.
@@ -149,6 +170,10 @@ class Sesion:
         return None
 
     def objetivo_min(self) -> float | None:
+        """Minutos a comparar. Con `estructura=` se compara en km (objetivo_km),
+        aunque el total se haya escrito en minutos."""
+        if self.estructura is not None:
+            return None
         return self.cantidad if self.unidad == "min" else None
 
     def ritmo_estimacion_s_km(self, est: Estimacion = ESTIMACION) -> int | None:
@@ -185,7 +210,7 @@ class Sesion:
         """
         km = self.objetivo_km()
         if km is not None:
-            return km, False
+            return km, self.estructura is not None and self.estructura.estimada
         estimado = self.objetivo_km_estimado(est)
         return (estimado, True) if estimado is not None else (None, False)
 
@@ -352,6 +377,7 @@ def estructura_desde_json(d: dict[str, Any] | None) -> Estructura | None:
             distancia_km=float(b["distancia_km"]),
             ritmo=ritmo_desde_json(b.get("ritmo")),
             crudo=b.get("crudo", ""),
+            duracion_s=None if b.get("duracion_s") is None else int(b["duracion_s"]),
         )
         for b in d["bloques"]
     )

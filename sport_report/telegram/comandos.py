@@ -44,12 +44,14 @@ AYUDA = """Comandos:
   la carrera principal (`Fedachi - 3` = a tres semanas de la Fedachi).
   Los 7 dias son obligatorios (usa `rest` si no hay sesion). Un dia puede
   tener mas de una linea (por ejemplo `J: easy 8km Z2` y `J: fuerza`).
+  `estructura=` admite tramos por tiempo y los convierte a km: las
+  repeticiones al ritmo medio (`4x5min@5:50/5:30`), el resto a ritmo easy.
   `/setplan proxima` ancla el plan a la semana siguiente.
 
 /tp [proxima] — importa el plan de la semana desde TrainingPeaks (lo que
   cargo tu entrenadora) y lo carga como un /setplan. Reemplaza el plan de esa
-  semana. Los ritmos y zonas no se importan; los tramos por tiempo tampoco
-  entran en `estructura=`. Ajusta lo que haga falta con /corregir.
+  semana. Los ritmos y zonas de TP no se importan; las series por tiempo toman
+  el ritmo escrito en la descripcion (`5:50 a 5:30`). Ajusta con /corregir.
 
 /corregir <dia>: <sesion> — arregla un dia sin reenviar la semana entera.
   Reemplaza TODAS las sesiones de ese dia:

@@ -173,7 +173,7 @@ def test_sin_distancia_planificada_se_suma_la_estructura():
     assert j.cantidad == 8.2  # 2 + 3x(1 + 0.4) + 2
 
 
-def test_tramos_por_tiempo_no_entran_en_estructura():
+def test_repeticiones_por_tiempo_sin_ritmo_no_entran_en_estructura():
     est = _estructura(_bloque(_paso(120, unidad="second"), _paso(60, "second", "rest"), reps=6))
     b = a_setplan([_w("2026-10-29", titulo="Fartlek", horas=0.5, estructura=est)], SEMANA)
     j = parse_plan(b.texto).dia("J")[0]
@@ -274,7 +274,8 @@ def test_tp_no_toca_el_plan_si_la_cookie_vencio(semana_fija):
 def test_tp_no_guarda_si_la_conversion_no_valida(semana_fija):
     store = PlanStore()
     sin_cantidad = _w("2026-10-27", titulo="Rodaje")
-    sin_cantidad["structure"] = _estructura(_bloque(_paso(1800, unidad="second")))
+    # Un tramo sin distancia ni duracion: no hay de donde sacar la cantidad.
+    sin_cantidad["structure"] = _estructura(_bloque(_paso(300, unidad="kilojoule")))
     r = comandos.cmd_tp(store, "", cliente=_cliente([sin_cantidad]))
     assert "No cargue el plan" in r and "/setplan" in r
     assert store.cargar() is None

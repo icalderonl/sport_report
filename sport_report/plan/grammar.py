@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 
+from ..config import ESTIMACION
 from .errors import ErrorPlan, PlanInvalido
 from .models import (
     DIAS,
@@ -38,6 +39,10 @@ RE_ESTRUCTURA = re.compile(r"^estructura\s*=\s*(.+)$", re.I)
 RE_DIST = re.compile(r"^(\d+(?:\.\d+)?)(km|k|m)$", re.I)
 RE_REP = re.compile(r"^(\d+)x(\d+(?:\.\d+)?)(km|k|m)$", re.I)
 RE_BLOQUE_PROG = re.compile(rf"^(\d+(?:\.\d+)?)(km|k|m)@({_MMSS})$", re.I)
+# Tramos por tiempo, con ritmo opcional: `15min`, `30s`, `4x5min@5:30/5:50`.
+RE_TIEMPO = re.compile(
+    rf"^(?:(\d+)x)?(\d+(?:\.\d+)?)(min|s)(?:@({_MMSS})(?:/({_MMSS}))?)?$", re.I
+)
 
 
 def _a_segundos(mmss: str) -> int:
@@ -61,8 +66,63 @@ def _parse_ritmo(m: re.Match[str]) -> Ritmo:
 # --------------------------------------------------------------------------
 
 
-def parse_estructura(crudo: str, tipo: str) -> Estructura:
-    """Parsea `estructura=`. Lanza ValueError con un mensaje accionable."""
+def _bloque_tiempo(
+    m: re.Match[str], token: str, tipo: str, ritmo_sesion: Ritmo | None
+) -> Bloque:
+    """Un tramo por tiempo, convertido a km.
+
+    El ritmo es el escrito en el tramo; si no lo hay, una repeticion toma el
+    @ritmo de la sesion y un tramo suelto (calentamiento, vuelta a la calma) el
+    ritmo easy de la configuracion. Una repeticion sin ningun ritmo se rechaza:
+    convertirla a ritmo suave subestimaria justo el trabajo que importa.
+    """
+    reps = int(m.group(1)) if m.group(1) else 1
+    if tipo == "prog" and not m.group(4):
+        raise ValueError(
+            f"bloque '{token}' invalido en `prog`: cada bloque necesita su propio "
+            f"ritmo (ej. {token}@5:30)"
+        )
+    if reps < 1:
+        raise ValueError(f"bloque '{token}': las repeticiones deben ser >= 1")
+    n = float(m.group(2))
+    seg = round(n * 60) if m.group(3).lower() == "min" else round(n)
+    if seg <= 0:
+        raise ValueError(f"bloque '{token}': la duracion debe ser mayor que 0")
+
+    ritmo: Ritmo | None = None
+    if m.group(4):
+        a = _a_segundos(m.group(4))
+        b = _a_segundos(m.group(5)) if m.group(5) else a
+        ritmo = Ritmo(min(a, b), max(a, b))
+    elif reps > 1:
+        ritmo = ritmo_sesion
+        if ritmo is None:
+            raise ValueError(
+                f"bloque '{token}': una repeticion por tiempo necesita ritmo para "
+                f"convertirla a km (ej. {token}@5:30/5:50)"
+            )
+    medio = (
+        (ritmo.min_s_km + ritmo.max_s_km) / 2 if ritmo else ESTIMACION.ritmo_easy_s_km
+    )
+    if medio <= 0:
+        raise ValueError(f"bloque '{token}': ritmo invalido")
+    return Bloque(
+        reps=reps,
+        distancia_km=round(seg / medio, 3),
+        ritmo=ritmo,
+        crudo=token,
+        duracion_s=seg,
+    )
+
+
+def parse_estructura(
+    crudo: str, tipo: str, ritmo_sesion: Ritmo | None = None
+) -> Estructura:
+    """Parsea `estructura=`. Lanza ValueError con un mensaje accionable.
+
+    Los tramos por tiempo se convierten a km (ver `_bloque_tiempo`), asi que
+    una estructura puede mezclar `15min` con `6x1000m`.
+    """
     crudo = crudo.strip()
     if not crudo:
         raise ValueError("`estructura=` esta vacia")
@@ -72,6 +132,11 @@ def parse_estructura(crudo: str, tipo: str) -> Estructura:
         token = token.strip()
         if not token:
             raise ValueError(f"bloque vacio en `estructura={crudo}` (revisa los '+')")
+
+        m = RE_TIEMPO.match(token)
+        if m:
+            bloques.append(_bloque_tiempo(m, token, tipo, ritmo_sesion))
+            continue
 
         if tipo == "prog":
             m = RE_BLOQUE_PROG.match(token)
@@ -114,7 +179,8 @@ def parse_estructura(crudo: str, tipo: str) -> Estructura:
             )
         raise ValueError(
             f"bloque '{token}' invalido: falta la unidad o el formato no se reconoce "
-            "(usa 2km, 600m o 3x1000m; las unidades son obligatorias en cada bloque)"
+            "(usa 2km, 600m, 3x1000m, 15min o 4x5min@5:30/5:50; las unidades son "
+            "obligatorias en cada bloque)"
         )
 
     return Estructura(bloques=tuple(bloques), crudo=crudo)
@@ -167,13 +233,16 @@ def _parse_sesion(dia: str, cuerpo: str) -> Sesion:
     ritmo: Ritmo | None = None
     zonas: tuple[str, ...] = ()
     estructura: Estructura | None = None
+    # Se parsea al final: una repeticion por tiempo sin ritmo propio toma el
+    # @ritmo de la sesion, que puede venir escrito despues de `estructura=`.
+    estructura_cruda: str | None = None
 
     for token in resto[1:]:
         me = RE_ESTRUCTURA.match(token)
         if me:
-            if estructura is not None:
+            if estructura_cruda is not None:
                 raise ValueError("`estructura=` aparece mas de una vez")
-            estructura = parse_estructura(me.group(1), tipo)
+            estructura_cruda = me.group(1)
             continue
 
         mz = RE_ZONA.match(token)
@@ -205,6 +274,8 @@ def _parse_sesion(dia: str, cuerpo: str) -> Sesion:
             f"'{token}' no se reconoce (esperaba @ritmo, zona Z1-Z5 o estructura=...)"
         )
 
+    if estructura_cruda is not None:
+        estructura = parse_estructura(estructura_cruda, tipo, ritmo)
     if tipo in TIPOS_ESTRUCTURADOS and estructura is None:
         raise ValueError(f"`{tipo}` requiere `estructura=`")
     if tipo in TIPOS_SIMPLES and estructura is not None:

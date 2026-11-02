@@ -9,9 +9,12 @@ Lo que se traduce y lo que no:
 
 - Corrida -> `easy`/`tempo`/`long`/`series`/`fartlek` con la cantidad
   planificada (km si TP la trae, si no minutos).
-- Estructura -> `estructura=` solo si TODOS los tramos de trabajo estan en
-  distancia: la gramatica no tiene tramos por tiempo. La recuperacion entre
-  repeticiones se omite, como pide la gramatica.
+- Estructura -> `estructura=` con tramos por distancia (`3x1000m`) o por
+  tiempo (`15min`, `4x5min@5:30/5:50`); el parser convierte los de tiempo a km.
+  Una repeticion por tiempo necesita ritmo, y TP no lo trae en la estructura
+  (la entrenadora usa % del umbral o RPE): se toma del rango `5:50 a 5:30` que
+  venga escrito en la descripcion. Sin ese rango la estructura no se importa y
+  se avisa. La recuperacion entre repeticiones se omite, como pide la gramatica.
 - Fuerza -> `fuerza`; dia libre o dia sin nada -> `rest`.
 - Ritmos y zonas NO se traducen: TP los guarda como % del umbral y convertirlos
   exige un umbral que el reporte no tiene. Se avisa.
@@ -20,6 +23,7 @@ Lo que se traduce y lo que no:
 from __future__ import annotations
 
 import json
+import re
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -48,6 +52,13 @@ DEPORTES = {
 
 _RECUPERACION = ("rest", "recovery")
 _METROS = {"meter": 1.0, "kilometer": 1000.0, "mile": 1609.344}
+_SEGUNDOS = {"second": 1.0, "minute": 60.0, "hour": 3600.0}
+
+# `5:50 a 5:30/km`, `5:30-5:50`, `5:30 y 5:50`: un rango de ritmo en el texto.
+_MMSS = r"\d{1,2}:[0-5]\d"
+_RE_RANGO = re.compile(rf"({_MMSS})\s*(?:a|-|–|y|/)\s*({_MMSS})", re.I)
+# `a 5:30/km`, `5:30 min/km`: un ritmo suelto.
+_RE_RITMO = re.compile(rf"({_MMSS})\s*(?:min)?\s*/\s*km", re.I)
 
 # Palabras del titulo que deciden el tipo cuando la estructura no lo dice.
 # El orden importa: "fondo largo progresivo" es largo antes que progresivo.
@@ -120,6 +131,37 @@ def _metros(paso: dict[str, Any]) -> float | None:
     return valor * factor if factor and valor else None
 
 
+def _segundos(paso: dict[str, Any]) -> float | None:
+    largo = paso.get("length") or {}
+    factor = _SEGUNDOS.get(str(largo.get("unit")))
+    valor = _positivo(largo.get("value"))
+    return valor * factor if factor and valor else None
+
+
+def _tramo_tiempo(segundos: float) -> str:
+    """`15min`, `1.5min` o `45s`."""
+    s = round(segundos)
+    if s >= 60 and s % 30 == 0:
+        return f"{_num(s / 60)}min"
+    return f"{s}s"
+
+
+def ritmo_de_texto(texto: str) -> str | None:
+    """El ritmo de las repeticiones escrito en la descripcion, como `@5:50/5:30`.
+
+    Solo si hay UN ritmo (o un rango) sin ambiguedad: con dos distintos no se
+    sabe cual corresponde a las repeticiones y se prefiere no importar.
+    """
+    rangos = {tuple(m.groups()) for m in _RE_RANGO.finditer(texto)}
+    if len(rangos) == 1:
+        a, b = rangos.pop()
+        return f"@{a}/{b}" if a != b else f"@{a}"
+    if rangos:
+        return None
+    sueltos = {m.group(1) for m in _RE_RITMO.finditer(texto)}
+    return f"@{sueltos.pop()}" if len(sueltos) == 1 else None
+
+
 def _tramo(metros: float, repeticion: bool = False) -> str:
     """`2km` para un tramo suelto, `1000m` para una repeticion (como se escribe)."""
     if not repeticion and metros >= 1000 and metros % 100 == 0:
@@ -133,12 +175,14 @@ class _Estructura:
     total_m: float | None  # distancia total, recuperacion incluida
     con_repeticiones: bool
     motivo: str = ""
+    total_s: float | None = None  # duracion total, recuperacion incluida
 
 
-def _leer_estructura(s: dict[str, Any]) -> _Estructura:
+def _leer_estructura(s: dict[str, Any], ritmo: str | None = None) -> _Estructura:
+    """`ritmo` (`@5:50/5:30`) se pega a las repeticiones por tiempo."""
     tokens: list[str] = []
-    total = 0.0
-    total_valido = True
+    total_m = total_s = 0.0
+    m_valido = s_valido = True
     con_reps = False
     motivo = ""
 
@@ -149,36 +193,52 @@ def _leer_estructura(s: dict[str, Any]) -> _Estructura:
         trabajo = [p for p in pasos if p.get("intensityClass") not in _RECUPERACION]
 
         for p in pasos:
-            m = _metros(p)
+            m, seg = _metros(p), _segundos(p)
             if m is None:
-                total_valido = False
+                m_valido = False
             else:
-                total += m * reps
+                total_m += m * reps
+            if seg is None:
+                s_valido = False
+            else:
+                total_s += seg * reps
 
-        if any(_metros(p) is None for p in trabajo):
-            motivo = "tiene tramos por tiempo y `estructura=` solo admite distancia"
+        if any(_metros(p) is None and _segundos(p) is None for p in trabajo):
+            motivo = "tiene tramos sin distancia ni duracion"
             continue
         if not trabajo:
             continue
+
+        def tramo(p: dict[str, Any], repeticion: bool) -> str:
+            m = _metros(p)
+            if m is not None:
+                return _tramo(m, repeticion)
+            return _tramo_tiempo(_segundos(p) or 0) + (ritmo if repeticion else "")
+
         if reps > 1:
             con_reps = True
+            if ritmo is None and any(_metros(p) is None for p in trabajo):
+                motivo = (
+                    "tiene repeticiones por tiempo y la descripcion no trae un ritmo "
+                    "claro (como `5:50 a 5:30`) con que convertirlas a km"
+                )
+                continue
             if len(trabajo) == 1:
-                tokens.append(f"{reps}x{_tramo(_metros(trabajo[0]), repeticion=True)}")
+                tokens.append(f"{reps}x{tramo(trabajo[0], True)}")
             else:
                 # Dos tramos de trabajo que se alternan no tienen notacion
                 # propia: se despliegan en orden, que es lo que se alinea
                 # contra las vueltas reales.
-                tokens.extend(
-                    _tramo(_metros(p), repeticion=True) for _ in range(reps) for p in trabajo
-                )
+                tokens.extend(tramo(p, True) for _ in range(reps) for p in trabajo)
         else:
-            tokens.extend(_tramo(_metros(p)) for p in trabajo)
+            tokens.extend(tramo(p, False) for p in trabajo)
 
     return _Estructura(
         texto=None if motivo or not tokens else "+".join(tokens),
-        total_m=total if total_valido and total > 0 else None,
+        total_m=total_m if m_valido and total_m > 0 else None,
         con_repeticiones=con_reps,
         motivo=motivo,
+        total_s=total_s if s_valido and total_s > 0 else None,
     )
 
 
@@ -195,7 +255,8 @@ def _corrida(w: dict[str, Any], letra: str, avisos: list[str]) -> str:
     nombre = f"{letra} «{titulo}»" if titulo else letra
 
     est = _estructura(w)
-    leida = _leer_estructura(est) if est else None
+    ritmo = ritmo_de_texto(str(w.get("description") or ""))
+    leida = _leer_estructura(est, ritmo) if est else None
     if leida and leida.motivo:
         avisos.append(f"{nombre}: la estructura no se importo porque {leida.motivo}")
 
@@ -213,8 +274,8 @@ def _corrida(w: dict[str, Any], letra: str, avisos: list[str]) -> str:
             tipo = "easy"
             if tipo_titulo in ("series", "fartlek"):
                 avisos.append(
-                    f"{nombre}: parece {tipo_titulo} pero no trae repeticiones en "
-                    "distancia; se cargo como easy"
+                    f"{nombre}: parece {tipo_titulo} pero no se pudo importar su "
+                    "estructura; se cargo como easy"
                 )
             else:
                 avisos.append(f"{nombre}: el titulo no dice el tipo; se cargo como easy")
@@ -222,6 +283,8 @@ def _corrida(w: dict[str, Any], letra: str, avisos: list[str]) -> str:
     km = _positivo(w.get("distancePlanned"))
     km = km / 1000 if km else (leida.total_m / 1000 if leida and leida.total_m else None)
     horas = _positivo(w.get("totalTimePlanned"))
+    if not horas and leida and leida.total_s:
+        horas = leida.total_s / 3600
     if km:
         cantidad = f"{_num(km)}km"
     elif horas:

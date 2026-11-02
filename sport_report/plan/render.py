@@ -24,7 +24,8 @@ def describir_sesion(s: Sesion) -> str:
         partes.append("/".join(s.zonas))
     if s.estructura:
         partes.append(f"[{s.estructura.crudo}]")
-        partes.append(f"-> {s.estructura.distancia_dura_km():g}km duros")
+        cola = " estimados" if s.estructura.estimada else ""
+        partes.append(f"-> {round(s.estructura.distancia_dura_km(), 2):g}km duros{cola}")
     return " ".join(partes)
 
 
@@ -42,7 +43,14 @@ def avisos(plan: PlanSemanal) -> list[str]:
             )
     for d in ORDEN_DIAS:
         for s in plan.dia(d):
-            if s.estructura is None or s.unidad != "km" or s.cantidad is None:
+            # Con tramos por tiempo los km son estimados y el total escrito
+            # incluye la recuperacion: la diferencia es esperable, no un error.
+            if (
+                s.estructura is None
+                or s.estructura.estimada
+                or s.unidad != "km"
+                or s.cantidad is None
+            ):
                 continue
             dura = s.estructura.distancia_dura_km()
             if dura <= 0:

@@ -145,6 +145,14 @@ dos sesiones) ni dos `fuerza` el mismo día. Un plan incompleto o mal escrito se
 semana siguiente (útil si lo cargas el domingo por la noche), y `/corregir` toca
 un día suelto sin reenviar la semana.
 
+`estructura=` acepta también **tramos por tiempo**, que se convierten a km al
+cargar el plan: `J: series 62min estructura=15min+4x5min@5:50/5:30+15min`. Las
+repeticiones van al **punto medio** del ritmo escrito (o al `@ritmo` de la
+sesión; sin ninguno se rechazan); los tramos sueltos sin ritmo —calentamiento y
+vuelta a la calma— al ritmo easy de `config.Estimacion` (7:00/km). Se puede
+mezclar con distancia (`15min+6x1000m+10min`). Los km quedan guardados con el
+plan y se muestran como **estimados**. La recuperación nunca se escribe.
+
 ## Decisiones que conviene conocer antes de tocar el código
 
 **Una sesión prescrita en minutos aporta km estimados al volumen planificado.**
